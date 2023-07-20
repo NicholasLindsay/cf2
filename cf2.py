@@ -46,6 +46,42 @@ class MetaTreeScalar(MetaTreeNode):
 
     def Ty(self) -> type:
         return self.__ty
+    
+    def HelpString(self) -> str:
+        s = super().HelpString()
+        return f'{s} [Type = {self.Ty().__name__}]'
+
+# Helper function to insert text at start of each line
+def PrefixLines(s: str, prefix: str):
+    new_lines = [f'{prefix}{l}' for l in s.splitlines(keepends=True)]
+    return ''.join(new_lines)
+
+def MetadataTreeAsStr(root: MetaTreeNode, is_top=True, is_last_sibling=True):
+    s = ''
+    if is_top:
+        s = f'{root.Name()}: {root.HelpString()}\n'
+    else:
+        if is_last_sibling:
+            s = f' └── {root.Name()}: {root.HelpString()}\n'
+        else:
+            s = f' ├── {root.Name()}: {root.HelpString()}\n'
+
+    prefix = ''
+    if not is_top:
+        if is_last_sibling:
+            prefix = '    '
+        else:
+            prefix = ' |  '
+
+    children_list = list(root.Children().values())
+
+    for c in children_list:
+        if c == children_list[-1]:
+            s += PrefixLines(MetadataTreeAsStr(c, False, True), prefix)
+        else:
+            s += PrefixLines(MetadataTreeAsStr(c, False, False), prefix)
+        
+    return s
 
 #class MetaTreeFixedDict(MetaTreeNode):
 #    __dict: dict[str, MetaTreeNode]
@@ -55,7 +91,19 @@ class MetaTreeScalar(MetaTreeNode):
 #    root: MetaTreeNode
 #    pass
 
-n = MetaTreeNode("cheese", "this is cheesy")
-s = MetaTreeScalar("egg", "how many eggs", int, parent=n)
-print(f"{s.Name()}: {s.HelpString()}. Type={s.Ty().__name__}. (parent = {s.Parent()})")
-print(f"{n.Name()}: {n.HelpString()} (parent = {n.Parent()}) (children = {n.Children()})")
+# Intended tree:
+# top
+# +-- foo
+# |   +-- bar
+# |   +-- baz
+# +-- alice
+#     +--- bob
+
+top = MetaTreeNode("top", "this is the top node")
+foo = MetaTreeNode("foo", "this is foo", parent = top)
+bar = MetaTreeScalar("bar", "this is bar", int, parent = foo)
+baz = MetaTreeScalar("baz", "this is baz", int, parent = foo)
+alice = MetaTreeNode("alice", "this is alice", parent = top)
+bob = MetaTreeScalar("bob", "this is bob", int, parent = alice)
+
+print(MetadataTreeAsStr(top))
