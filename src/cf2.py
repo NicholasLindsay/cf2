@@ -144,7 +144,7 @@ class MetaModel:
 standard_metamodel = MetaModel(top)
 # print(standard_metamodel.TreeAsString())
 
-def TypeCheckRecursive(path: list[str], data: Any, meta: MetaTreeNode) -> list[str]:
+def _TypeCheckRecursive(path: list[str], data: Any, meta: MetaTreeNode) -> list[str]:
     errlist: list[str] = []
     pathstr = '.'.join(path)
 
@@ -162,7 +162,7 @@ def TypeCheckRecursive(path: list[str], data: Any, meta: MetaTreeNode) -> list[s
                 if k not in meta.Children():
                     errlist.append(f"{pathstr}: \"{k}\" is not a valid key")
                 else:
-                    errlist += TypeCheckRecursive((path + [k]), data[k], meta[k])
+                    errlist += _TypeCheckRecursive((path + [k]), data[k], meta[k])
 
             for k in meta.Children():
                 if k not in data:
@@ -173,4 +173,4 @@ def TypeCheckRecursive(path: list[str], data: Any, meta: MetaTreeNode) -> list[s
 
 def TypeCheck(data: tuple[str, Any], model: MetaModel) -> list[str]:
     """Typecheck data against model, return list of errors OR empty list if OK"""
-    return TypeCheckRecursive([model.Root().Name()], data, model.Root())
+    return _TypeCheckRecursive([model.Root().Name()], data, model.Root())
