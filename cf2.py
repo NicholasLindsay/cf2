@@ -7,6 +7,8 @@ The intended usecase is to enable reproducible experiments by bringing
 the system into a standardized environent.
 """
 
+from typing import Any
+
 class MetaTreeNode:
     __name: str
     __helpstring: str
@@ -34,6 +36,15 @@ class MetaTreeNode:
     def Children(self) -> 'dict[str, MetaTreeNode]':
         return self.__children
     
+    def IsLeaf(self) -> bool:
+        return (not bool(self.Children()))
+    
+    def IsScalar(self) -> bool:
+        return False
+    
+    def __getitem__(self, key: str) -> 'MetaTreeNode':
+        return self.__children[key]
+
     def __RegisterChild(self, ch: 'MetaTreeNode'):
         self.__children[ch.Name()] = ch
 
@@ -50,6 +61,9 @@ class MetaTreeScalar(MetaTreeNode):
     def HelpString(self) -> str:
         s = super().HelpString()
         return f'{s} [Type = {self.Ty().__name__}]'
+    
+    def IsScalar(self) -> bool:
+        return True
 
 # Helper function to insert text at start of each line
 def PrefixLines(s: str, prefix: str):
@@ -114,4 +128,103 @@ MetaTreeScalar("scan_sleep_millisecs", "", int, parent=khpd)
 MetaTreeScalar("shmem_enabled", "", str, parent=thp)
 MetaTreeScalar("use_zero_page", "", int, parent=thp)
 
-print(MetadataTreeAsStr(top))
+# Encapsulate a MetaModel tree in a "MetaModel"
+class MetaModel:
+    __root: MetaTreeNode
+
+    def __init__(self, root):
+        self.__root = root
+    
+    def Root(self) -> MetaTreeNode:
+        return self.__root
+
+    def TreeAsString(self) -> str:
+        return MetadataTreeAsStr(self.Root())
+
+standard_metamodel = MetaModel(top)
+# print(standard_metamodel.TreeAsString())
+
+# Simple metamodel for testing:
+foo = MetaTreeNode("foo", "i am foo")
+bar = MetaTreeScalar("bar", "i am bar", int, parent=foo)
+baz = MetaTreeNode("baz", "i am baz", parent=foo)
+MetaTreeScalar("name", "person's name", str, parent=baz)
+MetaTreeScalar("age", "person's age", int, parent=baz)
+teams = MetaTreeNode("teams", "sports teams", parent=foo)
+MetaTreeScalar("soccer", "soccer", str, parent=teams)
+MetaTreeScalar("nfl", "american football", str, parent=teams)
+
+test_metamodel = MetaModel(foo)
+print(test_metamodel.TreeAsString())
+
+# This is the data we wish to typecheck
+good_data = {
+    "foo": {
+        "bar": 5,
+        "baz": {
+            "name": "john",
+            "age": 37,
+        },
+        "teams" : {
+            "soccer": "man utd",
+            "nfl": "tigers",
+        }
+    }
+}
+
+bad_data = {
+    "foo" : {
+        "bar" : False,
+        "baz" : {
+            "age" : "100",
+            "hobby" : [ "fishing" , "eating" ]
+        },
+        "teams": 619,
+        "etc" : {
+            "phone" : 123456709,
+        }
+    }
+}
+
+def TypeCheckRecursive(path: list[str], data: Any, meta: MetaTreeNode) -> list[str]:
+    errlist: list[str] = []
+    pathstr = '.'.join(path)
+
+    if meta.IsScalar():
+        assert(meta.IsLeaf())
+        if type(data) != meta.Ty():
+            errlist.append(f"{pathstr}: type mismatch (expected: {meta.Ty().__name__} got: {type(data).__name__})")
+    else:
+        assert(not meta.IsLeaf())
+        
+        if type(data) is not dict:
+            errlist.append(f"{pathstr}: type mismatch (expected: dict got: {type(data).__name__})")
+        else:
+            for k in data:
+                if k not in meta.Children():
+                    errlist.append(f"{pathstr}: \"{k}\" is not a valid key")
+                else:
+                    errlist += TypeCheckRecursive((path + [k]), data[k], meta[k])
+
+            for k in meta.Children():
+                if k not in data:
+                    typetext = meta[k].Ty().__name__ if meta[k].IsScalar() else "dict"
+                    errlist.append(f"{pathstr}: missing \"{k}\" field [Type = {typetext}]")
+
+    return errlist
+
+def TypeCheck(data: tuple[str, Any], model: MetaModel) -> list[str]:
+    """Typecheck data against model, return list of errors OR empty list if OK"""
+    return TypeCheckRecursive([model.Root().Name()], data, model.Root())
+
+errors = TypeCheck(good_data["foo"], test_metamodel)
+assert(not errors)
+
+errors = TypeCheck(bad_data["foo"], test_metamodel)
+assert(errors)
+if not errors:
+    print("Type-check OK")
+else:
+    print("Type-check ERRORS:")
+    for err in errors:
+        print(f"  {err}")
