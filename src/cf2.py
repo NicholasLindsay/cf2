@@ -144,48 +144,6 @@ class MetaModel:
 standard_metamodel = MetaModel(top)
 # print(standard_metamodel.TreeAsString())
 
-# Simple metamodel for testing:
-foo = MetaTreeNode("foo", "i am foo")
-bar = MetaTreeScalar("bar", "i am bar", int, parent=foo)
-baz = MetaTreeNode("baz", "i am baz", parent=foo)
-MetaTreeScalar("name", "person's name", str, parent=baz)
-MetaTreeScalar("age", "person's age", int, parent=baz)
-teams = MetaTreeNode("teams", "sports teams", parent=foo)
-MetaTreeScalar("soccer", "soccer", str, parent=teams)
-MetaTreeScalar("nfl", "american football", str, parent=teams)
-
-test_metamodel = MetaModel(foo)
-print(test_metamodel.TreeAsString())
-
-# This is the data we wish to typecheck
-good_data = {
-    "foo": {
-        "bar": 5,
-        "baz": {
-            "name": "john",
-            "age": 37,
-        },
-        "teams" : {
-            "soccer": "man utd",
-            "nfl": "tigers",
-        }
-    }
-}
-
-bad_data = {
-    "foo" : {
-        "bar" : False,
-        "baz" : {
-            "age" : "100",
-            "hobby" : [ "fishing" , "eating" ]
-        },
-        "teams": 619,
-        "etc" : {
-            "phone" : 123456709,
-        }
-    }
-}
-
 def TypeCheckRecursive(path: list[str], data: Any, meta: MetaTreeNode) -> list[str]:
     errlist: list[str] = []
     pathstr = '.'.join(path)
@@ -216,15 +174,3 @@ def TypeCheckRecursive(path: list[str], data: Any, meta: MetaTreeNode) -> list[s
 def TypeCheck(data: tuple[str, Any], model: MetaModel) -> list[str]:
     """Typecheck data against model, return list of errors OR empty list if OK"""
     return TypeCheckRecursive([model.Root().Name()], data, model.Root())
-
-errors = TypeCheck(good_data["foo"], test_metamodel)
-assert(not errors)
-
-errors = TypeCheck(bad_data["foo"], test_metamodel)
-assert(errors)
-if not errors:
-    print("Type-check OK")
-else:
-    print("Type-check ERRORS:")
-    for err in errors:
-        print(f"  {err}")
