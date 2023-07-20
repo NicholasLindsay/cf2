@@ -7,66 +7,55 @@ The intended usecase is to enable reproducible experiments by bringing
 the system into a standardized environent.
 """
 
-# This is what the DataModel should look like in code
-#   DM = DataModel()
-#   thp = DM["thp"] = DataModel(help="transparent hugepage subsystem", path="/sys/kernel/mm/transparent_hugepage/")
-#   thp["enabled"] = DataModel(help="enables THP", path_suffix="enabled")
-# Don't like it...
-# 
-#   TOP = DataModel()
-#   thp = DataModel("thp", parent=TOP, help="...", path="../../../..")
-#     OR
-#   TOP.AddChild("thp", help="...", path="../../../..")
-#     -> Creates a DataModel under the hood
- 
-
-class DataModel:
+class MetaTreeNode:
     __name: str
-    __parent: 'Optional[DataModel]'
-    __help: str
-    __is_leaf: bool
-    __children: dict[str, 'DataModel']
+    __helpstring: str
+    __parent: 'Optional[MetaTreeNode]'
+    __children: dict[str, 'MetaTreeNode']
 
-    def __init__(self, name: str, **kwargs):
+    def __init__(self, name: str, helpstring: str, **kwargs):
         self.__name = name
-
-        if "parent" in kwargs:
-            self.__parent = kwargs["parent"]
-        else:
-            self.__parent = None
-
-        if "help" in kwargs:
-            self.__help = kwargs['help']
-        else:
-            self.__help = ''
-        
-        self.__is_leaf = False
-
+        self.__helpstring = helpstring
+        self.__parent = None
+        if 'parent' in kwargs:
+            self.__parent = kwargs['parent']
+            self.__parent.__RegisterChild(self)
         self.__children = {}
-    
+
     def Name(self) -> str:
         return self.__name
+    
+    def HelpString(self) -> str:
+        return self.__helpstring
 
-    def AddChild(self, child: 'DataModel'):
-        if self.__is_leaf:
-            raise RuntimeError(f'Cannot add child to "{self.name}" - is leaf')
+    def Parent(self) -> 'MetaTreeNode':
+        return self.__parent
+    
+    def Children(self) -> 'dict[str, MetaTreeNode]':
+        return self.__children
+    
+    def __RegisterChild(self, ch: 'MetaTreeNode'):
+        self.__children[ch.Name()] = ch
 
-        if child.__name in self.__children:
-            raise RuntimeError(f'{child.__name} already a child in f{self.__name}')
+class MetaTreeScalar(MetaTreeNode):
+    __ty: type
 
-        self.__children[child.__name] = child
-        child.__parent = self
+    def __init__(self, name: str, helpstring: str, ty: type, **kwargs):
+        super().__init__(name, helpstring, **kwargs)
+        self.__ty = ty
 
-    # print function for debugging only
-    def print(self) -> None:
-        if self.__is_leaf:
-            pass
-        else:
-            print(f"{self.__name}:")
+    def Ty(self) -> type:
+        return self.__ty
 
+#class MetaTreeFixedDict(MetaTreeNode):
+#    __dict: dict[str, MetaTreeNode]
+#    pass
 
-# === TESTING: ===
-TOP = DataModel("top")
-TOP.AddChild(DataModel("cabbage"))
+#class MetaModel:
+#    root: MetaTreeNode
+#    pass
 
-TOP.print()
+n = MetaTreeNode("cheese", "this is cheesy")
+s = MetaTreeScalar("egg", "how many eggs", int, parent=n)
+print(f"{s.Name()}: {s.HelpString()}. Type={s.Ty().__name__}. (parent = {s.Parent()})")
+print(f"{n.Name()}: {n.HelpString()} (parent = {n.Parent()}) (children = {n.Children()})")
