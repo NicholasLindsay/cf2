@@ -83,27 +83,35 @@ def MetadataTreeAsStr(root: MetaTreeNode, is_top=True, is_last_sibling=True):
         
     return s
 
-#class MetaTreeFixedDict(MetaTreeNode):
-#    __dict: dict[str, MetaTreeNode]
-#    pass
-
-#class MetaModel:
-#    root: MetaTreeNode
-#    pass
-
-# Intended tree:
-# top
-# +-- foo
-# |   +-- bar
-# |   +-- baz
-# +-- alice
-#     +--- bob
-
-top = MetaTreeNode("top", "this is the top node")
-foo = MetaTreeNode("foo", "this is foo", parent = top)
-bar = MetaTreeScalar("bar", "this is bar", int, parent = foo)
-baz = MetaTreeScalar("baz", "this is baz", int, parent = foo)
-alice = MetaTreeNode("alice", "this is alice", parent = top)
-bob = MetaTreeScalar("bob", "this is bob", int, parent = alice)
+# ===[ META MODEL DEFINITION ]===
+top = MetaTreeNode("top", "top node")
+ksm = MetaTreeNode("ksm", "kernel samepage merging", parent=top)
+MetaTreeScalar("max_page_sharing", "", int, parent=ksm)
+MetaTreeScalar("merge_accross_nodes", "", int, parent=ksm)
+MetaTreeScalar("pages_to_scan", "", int, parent=ksm)
+MetaTreeScalar("run", "", int, parent=ksm)
+MetaTreeScalar("sleep_millisecs", "", int, parent=ksm)
+MetaTreeScalar("stable_node_chains_prune_millisecs", "", int, parent=ksm)
+MetaTreeScalar("use_zero_pages", "", int, parent=ksm)
+lru_gen = MetaTreeNode("lru_gen", "", parent=top)
+MetaTreeScalar("enabled", "", str, parent=lru_gen)
+MetaTreeScalar("min_ttl_ms", "", int, parent=lru_gen)
+numa = MetaTreeNode("numa", "non-uniform memory access", parent = top)
+MetaTreeScalar("demotion_enabled", "", bool, parent=numa)
+swap = MetaTreeNode("swap", "", parent=top)
+MetaTreeScalar("vma_ra_enabled", "", bool, parent=swap)
+thp = MetaTreeNode("transparent_hugepage", "transparent hugepages", parent=top)
+MetaTreeScalar("defrag", "", str, parent=thp)
+MetaTreeScalar("enabled", "", str, parent=thp)
+MetaTreeScalar("hpage_pmd_size", "", int, parent=thp)
+khpd = MetaTreeNode("khugepaged", "huge pages daemon", parent=thp)
+MetaTreeScalar("alloc_sleep_millisecs", "", int, parent=khpd)
+MetaTreeScalar("max_ptes_none", "", int, parent=khpd)
+MetaTreeScalar("max_ptes_shared", "", int, parent=khpd)
+MetaTreeScalar("max_ptes_swap", "", int, parent=khpd)
+MetaTreeScalar("pages_to_scan", "", int, parent=khpd)
+MetaTreeScalar("scan_sleep_millisecs", "", int, parent=khpd)
+MetaTreeScalar("shmem_enabled", "", str, parent=thp)
+MetaTreeScalar("use_zero_page", "", int, parent=thp)
 
 print(MetadataTreeAsStr(top))
