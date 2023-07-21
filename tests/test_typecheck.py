@@ -46,8 +46,15 @@ class TestTypeCheck(unittest.TestCase):
                         }
                     }
         errlist = TEST_METAMODEL.TypeCheck(bad_data)
-        self.assertNotEqual(len(errlist), 0)
+        self.assertEqual("\n".join(errlist),"""\
+top.bar: type mismatch (expected: int got: bool)
+top.baz.age: type mismatch (expected: int got: str)
+top.baz: "hobby" is not a valid key
+top.baz: missing "name" field [Type = str]
+top.teams: type mismatch (expected: dict got: int)
+top: "etc" is not a valid key""")
 
+# TODO: this test is not for typechecking so doesn't agree with file name
 class TestPrintTree(unittest.TestCase):
     def test_print_tree(self):
         strio = io.StringIO()

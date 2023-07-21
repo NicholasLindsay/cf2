@@ -40,16 +40,17 @@ class MetaTreeNode(ABC):
     def HelpString(self) -> str:
         return self.__helpstring
 
-    def Parent(self) -> 'Optional[MetaTreeNode]':
+    def Parent(self) -> 'Optional[MetaTreeFixedDict]':
         return self.__parent
     
+    def Path(self) -> list[str]:
+        if self.__parent:
+            return [*self.__parent.Path(), self.Name()]
+        else:
+            return [self.Name()]
+
     @abstractmethod
     def TypeString(self) -> str:
-        pass
-
-    # TODO: Use the Visitor pattern instead
-    @abstractmethod
-    def _TypeCheckRecursive(self, path: list[str], data: Any) -> list[str]:
         pass
 
     @abstractmethod
@@ -78,26 +79,6 @@ class MetaTreeFixedDict(MetaTreeNode):
     def RegisterChild(self, ch: 'MetaTreeNode'):
         assert(ch.Name() not in self.__children)
         self.__children[ch.Name()] = ch
-
-    def _TypeCheckRecursive(self, path: list[str], data: Any) -> list[str]:
-        errlist: list[str] = []
-        pathstr = '.'.join(path)
-
-        if type(data) is not dict:
-            errlist.append(f"{pathstr}: type mismatch (expected: dict got: {type(data).__name__})")
-        else:
-            for k in data:
-                if k not in self.Children():
-                    errlist.append(f"{pathstr}: \"{k}\" is not a valid key")
-                else:
-                    errlist += self[k]._TypeCheckRecursive((path + [k]), data[k])
-
-            for k in self.Children():
-                if k not in data:
-                    typetext = self[k].TypeString()
-                    errlist.append(f"{pathstr}: missing \"{k}\" field [Type = {typetext}]")
-
-        return errlist
     
     def AcceptVisitor(self, visitor: 'MetaTreeVisitor') -> None:
         return visitor.VisitFixedDict(self)
@@ -118,15 +99,6 @@ class MetaTreeScalar(MetaTreeNode):
     
     def TypeString(self) -> str:
         return self.Ty().__name__
-
-    def _TypeCheckRecursive(self, path: list[str], data: Any) -> list[str]:
-        errlist: list[str] = []
-        pathstr = '.'.join(path)
-
-        if type(data) != self.Ty():
-            errlist.append(f"{pathstr}: type mismatch (expected: {self.TypeString()} got: {type(data).__name__})")
-
-        return errlist
     
     def AcceptVisitor(self, visitor: 'MetaTreeVisitor') -> None:
         return visitor.VisitScalar(self)
@@ -186,6 +158,39 @@ class MetaTreePrinter(MetaTreeVisitor):
     def VisitScalar(self, node: MetaTreeScalar) -> None:
         self.PrintCommon(node)
 
+class MetaTreeTypeChecker(MetaTreeVisitor):
+    __data: Any
+    __errlist: list[str]
+
+    def __init__(self, data: Any, errlist: list[str]):
+        super().__init__()
+
+        self.__data = data
+        self.__errlist = errlist
+
+    def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
+        pathstr = '.'.join(node.Path())
+
+        if type(self.__data) is not dict:
+            self.__errlist.append(f"{pathstr}: type mismatch (expected: dict got: {type(self.__data).__name__})")
+        else:
+            for k in self.__data:
+                if k not in node.ChildrenNames():
+                    self.__errlist.append(f"{pathstr}: \"{k}\" is not a valid key")
+                else:
+                    node[k].AcceptVisitor(MetaTreeTypeChecker(self.__data[k], self.__errlist))
+
+            for k in node.ChildrenNames():
+                if k not in self.__data:
+                    typetext = node[k].TypeString()
+                    self.__errlist.append(f"{pathstr}: missing \"{k}\" field [Type = {typetext}]")
+    
+    def VisitScalar(self, node: MetaTreeScalar) -> None:
+        pathstr = '.'.join(node.Path())
+
+        if type(self.__data) != node.Ty():
+            self.__errlist.append(f"{pathstr}: type mismatch (expected: {node.TypeString()} got: {type(self.__data).__name__})")
+
 # ===[ META MODEL DEFINITION ]===
 top = MetaTreeFixedDict("top", "top node")
 ksm = MetaTreeFixedDict("ksm", "kernel samepage merging", parent=top)
@@ -232,7 +237,10 @@ class MetaModel:
         self.Root().AcceptVisitor(visitor)
 
     def TypeCheck(self, data) -> list[str]:
-        return self.Root()._TypeCheckRecursive([], data)
+        errlist = []
+        visitor = MetaTreeTypeChecker(data, errlist)
+        self.Root().AcceptVisitor(visitor)
+        return errlist
 
 STANDARD_METAMODEL = MetaModel(top)
 STANDARD_METAMODEL.PrintTree()
