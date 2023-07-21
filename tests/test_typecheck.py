@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import io
 import unittest
 
 from src.cf2 import *
@@ -17,7 +18,7 @@ TEST_METAMODEL = MetaModel(TOP)
 
 # ===[ Tests ]===
 class TestTypeCheck(unittest.TestCase):
-    def test_good_case(self):
+    def test_good_data(self):
         good_data = {
                         "bar": 5,
                         "baz": {
@@ -32,7 +33,7 @@ class TestTypeCheck(unittest.TestCase):
         errlist = TEST_METAMODEL.TypeCheck(good_data)
         self.assertEqual(errlist, [], "detected error in good case")
 
-    def test_bad_case(self):
+    def test_bad_data(self):
         bad_data = {
                         "bar" : False,
                         "baz" : {
@@ -46,6 +47,24 @@ class TestTypeCheck(unittest.TestCase):
                     }
         errlist = TEST_METAMODEL.TypeCheck(bad_data)
         self.assertNotEqual(len(errlist), 0)
+
+class TestPrintTree(unittest.TestCase):
+    def test_print_tree(self):
+        strio = io.StringIO()
+        TEST_METAMODEL.PrintTree(strio)
+        s = strio.getvalue()
+        expected = """\
+top: i am top
+ ├── bar: i am bar [Type = int]
+ ├── baz: i am baz
+ │   ├── name: person's name [Type = str]
+ │   └── age: person's age [Type = int]
+ └── teams: sports teams
+     ├── soccer: soccer [Type = str]
+     └── nfl: american football [Type = str]
+"""
+        
+        self.assertEqual(s, expected)
 
 # ===[ Boilerplate ]===
 if __name__ == '__main__':
