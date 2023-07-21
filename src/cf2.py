@@ -7,9 +7,10 @@ The intended usecase is to enable reproducible experiments by bringing
 the system into a standardized environent.
 """
 
+from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-class MetaTreeNode:
+class MetaTreeNode(ABC):
     __name: str
     __helpstring: str
     __parent: 'Optional[MetaTreeFixedDict]'
@@ -31,9 +32,11 @@ class MetaTreeNode:
     def Parent(self) -> 'Optional[MetaTreeNode]':
         return self.__parent
     
+    @abstractmethod
     def TypeString(self) -> str:
-        return type(self).__name__
+        pass
 
+    # TODO: Use the Visitor pattern instead
     def MetadataTreeAsStr(self, is_top=True, is_last_sibling=True):
         s = ''
         if is_top:
@@ -46,8 +49,10 @@ class MetaTreeNode:
             
         return s
 
+    # TODO: Use the Visitor pattern instead
+    @abstractmethod
     def _TypeCheckRecursive(self, path: list[str], data: Any) -> list[str]:
-        return []
+        pass
     
 class MetaTreeFixedDict(MetaTreeNode):
     __children: dict[str, 'MetaTreeNode']
