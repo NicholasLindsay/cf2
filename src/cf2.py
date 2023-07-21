@@ -31,9 +31,6 @@ class MetaTreeNode:
     def Parent(self) -> 'Optional[MetaTreeNode]':
         return self.__parent
     
-    def IsScalar(self) -> bool:
-        return False
-    
     def TypeString(self) -> str:
         return type(self).__name__
 
@@ -61,12 +58,6 @@ class MetaTreeFixedDict(MetaTreeNode):
 
     def Children(self) -> 'dict[str, MetaTreeNode]':
         return self.__children
-
-    def IsLeaf(self) -> bool:
-        return (not bool(self.Children()))
-    
-    def IsScalar(self) -> bool:
-        return False
     
     def TypeString(self) -> str:
         return "FixedDict"
@@ -130,12 +121,6 @@ class MetaTreeScalar(MetaTreeNode):
     def HelpString(self) -> str:
         s = super().HelpString()
         return f'{s} [Type = {self.Ty().__name__}]'
-    
-    def IsScalar(self) -> bool:
-        return True
-    
-    def IsLeaf(self) -> bool:
-        return False
     
     def TypeString(self) -> str:
         return self.Ty().__name__
