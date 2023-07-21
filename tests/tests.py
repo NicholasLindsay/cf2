@@ -54,7 +54,6 @@ top.baz: missing "name" field [Type = str]
 top.teams: type mismatch (expected: dict got: int)
 top: "etc" is not a valid key""")
 
-# TODO: this test is not for typechecking so doesn't agree with file name
 class TestPrintTree(unittest.TestCase):
     def test_print_tree(self):
         strio = io.StringIO()
