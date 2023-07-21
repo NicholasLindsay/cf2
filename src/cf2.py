@@ -191,11 +191,64 @@ class MetaTreeTypeChecker(MetaTreeVisitor):
         if type(self.__data) != node.Ty():
             self.__errlist.append(f"{pathstr}: type mismatch (expected: {node.TypeString()} got: {type(self.__data).__name__})")
 
+# ===[ MODEL AND METAMODEL DEFINITIONS ]===
+# Represents data that has been successfully typechecked against a metamodel
+class TypecheckedModel:
+    __rawdata: Any
+    __metamodel: 'MetaModel'
+
+    def __init__(self, data: Any, metamodel: 'MetaModel'):
+        self.__rawdata = data
+        self.__metamodel = metamodel
+    
+    def MetaModel(self) -> 'MetaModel':
+        return self.__metamodel
+
+    def RawData(self) -> Any:
+        return self.__rawdata
+
+class CreateTypecheckedModelResult:
+    success: bool
+    errors: list[str]
+    model: Optional[TypecheckedModel]
+
+    def __init__(self, success: bool, errors: list[str], model: Optional[TypecheckedModel]):
+        self.success = success
+        self.errors = errors
+        self.model = model
+
+# Encapsulate a MetaModel tree within a "MetaModel"
+class MetaModel:
+    __root: MetaTreeNode
+
+    def __init__(self, root):
+        self.__root = root
+    
+    def Root(self) -> MetaTreeNode:
+        return self.__root
+    
+    def PrintTree(self, output = sys.stdout):
+        visitor = MetaTreePrinter(output, True, True)
+        self.Root().AcceptVisitor(visitor)
+
+    def TypeCheck(self, rawdata) -> list[str]:
+        errlist = []
+        visitor = MetaTreeTypeChecker(rawdata, errlist)
+        self.Root().AcceptVisitor(visitor)
+        return errlist
+    
+    def CreateTypecheckedModel(self, rawdata: Any) -> CreateTypecheckedModelResult:
+        errs = self.TypeCheck(rawdata)
+        if errs:
+            return CreateTypecheckedModelResult(False, errs, None)
+        else:
+            return CreateTypecheckedModelResult(True, [], TypecheckedModel(rawdata, self))
+
 # ===[ META MODEL DEFINITION ]===
 _TOP = MetaTreeFixedDict("top", "top node")
 _KSM = MetaTreeFixedDict("ksm", "kernel samepage merging", parent=_TOP)
 MetaTreeScalar("max_page_sharing", "", int, parent=_KSM)
-MetaTreeScalar("merge_accross_nodes", "", int, parent=_KSM)
+MetaTreeScalar("merge_across_nodes", "", int, parent=_KSM)
 MetaTreeScalar("pages_to_scan", "", int, parent=_KSM)
 MetaTreeScalar("run", "", int, parent=_KSM)
 MetaTreeScalar("sleep_millisecs", "", int, parent=_KSM)
@@ -222,25 +275,30 @@ MetaTreeScalar("scan_sleep_millisecs", "", int, parent=_KHPD)
 MetaTreeScalar("shmem_enabled", "", str, parent=_THP)
 MetaTreeScalar("use_zero_page", "", int, parent=_THP)
 
-# Encapsulate a MetaModel tree in a "MetaModel"
-class MetaModel:
-    __root: MetaTreeNode
-
-    def __init__(self, root):
-        self.__root = root
-    
-    def Root(self) -> MetaTreeNode:
-        return self.__root
-    
-    def PrintTree(self, output = sys.stdout):
-        visitor = MetaTreePrinter(output, True, True)
-        self.Root().AcceptVisitor(visitor)
-
-    def TypeCheck(self, data) -> list[str]:
-        errlist = []
-        visitor = MetaTreeTypeChecker(data, errlist)
-        self.Root().AcceptVisitor(visitor)
-        return errlist
-
 STANDARD_METAMODEL = MetaModel(_TOP)
-STANDARD_METAMODEL.PrintTree()
+# STANDARD_METAMODEL.PrintTree()
+
+# ===[ USER PROCESSING ]===
+if __name__ == "__main__":
+    import argparse
+    import pathlib
+    import yaml
+
+    parser = argparse.ArgumentParser("cf2", description=__doc__)
+    parser.add_argument("filename", type=pathlib.Path,
+                        help="path to configuration file")
+    args = parser.parse_args()
+
+    with open(args.filename, "r") as file:
+        rawdata = yaml.safe_load(file)
+        typecheck_results = STANDARD_METAMODEL.CreateTypecheckedModel(rawdata)
+        if typecheck_results.success:
+            print("File typechecking passed!")
+            print("Raw Data:")
+            print(rawdata)
+            exit(0)
+        else:
+            print("File typechecking failed!")
+            print("ERRORS:")
+            print("\n".join(typecheck_results.errors))
+            exit(1)
