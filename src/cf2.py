@@ -8,7 +8,18 @@ the system into a standardized environent.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+import io
+import sys # for stdout
+from typing import Any, IO, Optional, TextIO
+
+# ===[ HELPER FUNCTIONS ]===
+
+# Helper function to insert text at start of each line
+def PrefixLines(s: str, prefix: str):
+    new_lines = [f'{prefix}{l}' for l in s.splitlines(keepends=True)]
+    return ''.join(new_lines)
+
+# ===[ META TREE STRUCTURE CLASSES ]===
 
 class MetaTreeNode(ABC):
     __name: str
@@ -37,21 +48,12 @@ class MetaTreeNode(ABC):
         pass
 
     # TODO: Use the Visitor pattern instead
-    def MetadataTreeAsStr(self, is_top=True, is_last_sibling=True):
-        s = ''
-        if is_top:
-            s = f'{self.Name()}: {self.HelpString()}\n'
-        else:
-            if is_last_sibling:
-                s = f' └── {self.Name()}: {self.HelpString()}\n'
-            else:
-                s = f' ├── {self.Name()}: {self.HelpString()}\n'
-            
-        return s
-
-    # TODO: Use the Visitor pattern instead
     @abstractmethod
     def _TypeCheckRecursive(self, path: list[str], data: Any) -> list[str]:
+        pass
+
+    @abstractmethod
+    def AcceptVisitor(self, visitor: 'MetaTreeVisitor') -> None:
         pass
     
 class MetaTreeFixedDict(MetaTreeNode):
@@ -64,6 +66,9 @@ class MetaTreeFixedDict(MetaTreeNode):
     def Children(self) -> 'dict[str, MetaTreeNode]':
         return self.__children
     
+    def ChildrenNames(self) -> list[str]:
+        return list(self.__children.keys())
+    
     def TypeString(self) -> str:
         return "FixedDict"
 
@@ -73,25 +78,6 @@ class MetaTreeFixedDict(MetaTreeNode):
     def RegisterChild(self, ch: 'MetaTreeNode'):
         assert(ch.Name() not in self.__children)
         self.__children[ch.Name()] = ch
-
-    def MetadataTreeAsStr(self, is_top=True, is_last_sibling=True):
-        s = super().MetadataTreeAsStr(is_top, is_last_sibling)
-
-        prefix = ''
-        if not is_top:
-            if is_last_sibling:
-                prefix = '    '
-            else:
-                prefix = ' │  '
-
-        children_list = list(self.Children().values())
-        for c in children_list:
-            if c == children_list[-1]:
-                s += PrefixLines(c.MetadataTreeAsStr(False, True), prefix)
-            else:
-                s += PrefixLines(c.MetadataTreeAsStr(False, False), prefix)
-            
-        return s
 
     def _TypeCheckRecursive(self, path: list[str], data: Any) -> list[str]:
         errlist: list[str] = []
@@ -112,6 +98,9 @@ class MetaTreeFixedDict(MetaTreeNode):
                     errlist.append(f"{pathstr}: missing \"{k}\" field [Type = {typetext}]")
 
         return errlist
+    
+    def AcceptVisitor(self, visitor: 'MetaTreeVisitor') -> None:
+        return visitor.VisitFixedDict(self)
 
 class MetaTreeScalar(MetaTreeNode):
     __ty: type
@@ -138,11 +127,64 @@ class MetaTreeScalar(MetaTreeNode):
             errlist.append(f"{pathstr}: type mismatch (expected: {self.TypeString()} got: {type(data).__name__})")
 
         return errlist
+    
+    def AcceptVisitor(self, visitor: 'MetaTreeVisitor') -> None:
+        return visitor.VisitScalar(self)
+    
+# ===[ META TREE VISITOR CLASSES ]===
+class MetaTreeVisitor(ABC):
+    @abstractmethod
+    def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
+        pass
 
-# Helper function to insert text at start of each line
-def PrefixLines(s: str, prefix: str):
-    new_lines = [f'{prefix}{l}' for l in s.splitlines(keepends=True)]
-    return ''.join(new_lines)
+    @abstractmethod
+    def VisitScalar(self, node: MetaTreeScalar) -> None:
+        pass
+
+class MetaTreePrinter(MetaTreeVisitor):
+    __output: TextIO
+    __is_top: bool
+    __is_last_sibling: bool
+
+    def __init__(self, output: TextIO, is_top: bool, is_last_sibling: bool):
+        super().__init__()
+        self.__output = output
+        self.__is_top = is_top
+        self.__is_last_sibling = is_last_sibling
+    
+    def PrintCommon(self, node: MetaTreeNode) -> None:
+        if self.__is_top:
+            print(f'{node.Name()}: {node.HelpString()}', file=self.__output)
+        else:
+            if self.__is_last_sibling:
+                print(f' └── {node.Name()}: {node.HelpString()}', file=self.__output)
+            else:
+                print(f' ├── {node.Name()}: {node.HelpString()}', file=self.__output)
+
+    def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
+        self.PrintCommon(node)
+
+        prefix = ''
+        if not self.__is_top:
+            if self.__is_last_sibling:
+                prefix = '    '
+            else:
+                prefix = ' │  '
+
+        children_list = list(node.ChildrenNames())
+        for c in children_list:
+            str_io = io.StringIO()
+
+            if c == children_list[-1]:
+                new_visitor = MetaTreePrinter(str_io, False, True)
+            else:
+                new_visitor = MetaTreePrinter(str_io, False, False)
+        
+            node[c].AcceptVisitor(new_visitor)
+            print(PrefixLines(str_io.getvalue(), prefix), file = self.__output, end="")
+
+    def VisitScalar(self, node: MetaTreeScalar) -> None:
+        self.PrintCommon(node)
 
 # ===[ META MODEL DEFINITION ]===
 top = MetaTreeFixedDict("top", "top node")
@@ -184,11 +226,13 @@ class MetaModel:
     
     def Root(self) -> MetaTreeNode:
         return self.__root
-
-    def TreeAsString(self) -> str:
-        return self.__root.MetadataTreeAsStr()
     
+    def PrintTree(self, output = sys.stdout):
+        visitor = MetaTreePrinter(output, True, True)
+        self.Root().AcceptVisitor(visitor)
+
     def TypeCheck(self, data) -> list[str]:
         return self.Root()._TypeCheckRecursive([], data)
 
 STANDARD_METAMODEL = MetaModel(top)
+STANDARD_METAMODEL.PrintTree()
