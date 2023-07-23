@@ -301,15 +301,17 @@ class MetaTreePlugReaderVisitor(MetaTreeVisitor):
 class MetaTreePlugWriterVisitor(MetaTreeVisitor):
     __diffonly: bool
     __rawdata: Any
+    __errlist: list[str]
 
-    def __init__(self, diffonly: bool, rawdata: Any):
+    def __init__(self, diffonly: bool, rawdata: Any, errlist: list[str]):
         self.__diffonly = diffonly
         self.__rawdata = rawdata
+        self.__errlist = errlist
 
     def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
         assert(node.Plug() is None)
         for ch in node.Children():
-            node[ch].AcceptVisitor(MetaTreePlugWriterVisitor(self.__diffonly, self.__rawdata[ch]))
+            node[ch].AcceptVisitor(MetaTreePlugWriterVisitor(self.__diffonly, self.__rawdata[ch], self.__errlist))
 
     def VisitScalar(self, node: MetaTreeScalar) -> None:
         p = node.Plug()
@@ -319,7 +321,11 @@ class MetaTreePlugWriterVisitor(MetaTreeVisitor):
             val = p.Read()
             if val == self.__rawdata:
                 return
-        p.Write(self.__rawdata)
+        
+        try:
+            p.Write(self.__rawdata)
+        except Exception as e:
+            self.__errlist.append(f'When applying {".".join(node.Path())}: {e}')  
 
 # ===[ MODEL AND METAMODEL DEFINITIONS ]===
 # Represents data that has been successfully typechecked against a metamodel
@@ -454,11 +460,14 @@ def ReadSystemConfig(metamodel: MetaModel) -> TypecheckedModel:
     else:
         raise RuntimeError(f'errors when typechecking read system rawdata:\n {",".join(result.errors)}')
 
-def ApplySystemConfig(model: TypecheckedModel, diffonly: bool):
+def ApplySystemConfig(model: TypecheckedModel, diffonly: bool) -> list[str]:
+    # Returns list of errors (empty if none)
     metamodel = model.MetaModel()
     rawdata = model.RawData()
-    writer = MetaTreePlugWriterVisitor(diffonly, rawdata)
+    errlist = []
+    writer = MetaTreePlugWriterVisitor(diffonly, rawdata, errlist)
     metamodel.Root().AcceptVisitor(writer)
+    return errlist
 
 def LoadAndCheckConfigFile(filename: pathlib.Path) -> TypecheckedModel:
     with open(filename, 'r') as file:
@@ -548,7 +557,15 @@ class ApplySubcommand(Subcommand):
     def Go(self, args):
         diffonly = (not args.always)
         model = LoadAndCheckConfigFile(args.filename) # will exit(1) if error
-        ApplySystemConfig(model, diffonly)
+        errlist = ApplySystemConfig(model, diffonly)
+        if not errlist:
+            print("Successfully applied config!")
+            exit(0)
+        else:
+            print("Could not apply all settings!")
+            print("Errors:")
+            print('\n'.join(errlist))
+            exit(1)
 
 def main():
     parser = argparse.ArgumentParser("cf2", description=__doc__)
