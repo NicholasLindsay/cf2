@@ -298,6 +298,29 @@ class MetaTreePlugReaderVisitor(MetaTreeVisitor):
         assert(p is not None)
         self.__rawdata[node.Name()] = p.Read()
 
+class MetaTreePlugWriterVisitor(MetaTreeVisitor):
+    __diffonly: bool
+    __rawdata: Any
+
+    def __init__(self, diffonly: bool, rawdata: Any):
+        self.__diffonly = diffonly
+        self.__rawdata = rawdata
+
+    def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
+        assert(node.Plug() is None)
+        for ch in node.Children():
+            node[ch].AcceptVisitor(MetaTreePlugWriterVisitor(self.__diffonly, self.__rawdata[ch]))
+
+    def VisitScalar(self, node: MetaTreeScalar) -> None:
+        p = node.Plug()
+        assert(p is not None)
+        if self.__diffonly:
+            # If diffonly, only perform a write if value different from current
+            val = p.Read()
+            if val == self.__rawdata:
+                return
+        p.Write(self.__rawdata)
+
 # ===[ MODEL AND METAMODEL DEFINITIONS ]===
 # Represents data that has been successfully typechecked against a metamodel
 class TypecheckedModel:
@@ -431,8 +454,26 @@ def ReadSystemConfig(metamodel: MetaModel) -> TypecheckedModel:
     else:
         raise RuntimeError(f'errors when typechecking read system rawdata:\n {",".join(result.errors)}')
 
-model = ReadSystemConfig(STANDARD_METAMODEL)
-# print(f"Created model succesfully!: {model.RawData()}")
+def ApplySystemConfig(model: TypecheckedModel, diffonly: bool):
+    metamodel = model.MetaModel()
+    rawdata = model.RawData()
+    writer = MetaTreePlugWriterVisitor(diffonly, rawdata)
+    metamodel.Root().AcceptVisitor(writer)
+
+def LoadAndCheckConfigFile(filename: pathlib.Path) -> TypecheckedModel:
+    with open(filename, 'r') as file:
+        rawdata = yaml.safe_load(file)
+    
+    typecheck_results = STANDARD_METAMODEL.CreateTypecheckedModel(rawdata)
+
+    if not typecheck_results.success:
+        print("File typechecking failed!")
+        print("ERRORS:")
+        print("\n".join(typecheck_results.errors))
+        exit(1)
+
+    assert(typecheck_results.model is not None)
+    return typecheck_results.model
 
 # ===[ USER PROCESSING ]===
 import argparse
@@ -479,19 +520,8 @@ class TypecheckSubcommand(Subcommand):
         parser.add_argument("filename", type=pathlib.Path, help="config file to typecheck")
     
     def Go(self, args):
-        with open(args.filename, "r") as file:
-            rawdata = yaml.safe_load(file)
-            typecheck_results = STANDARD_METAMODEL.CreateTypecheckedModel(rawdata)
-            if typecheck_results.success:
-                print("File typechecking passed!")
-                #print("Raw Data:")
-                #print(rawdata)
-                exit(0)
-            else:
-                print("File typechecking failed!")
-                print("ERRORS:")
-                print("\n".join(typecheck_results.errors))
-                exit(1)
+        LoadAndCheckConfigFile(args.filename) # will exit(1) if error
+        exit(0)
 
 class ObtainSubcommand(Subcommand):
     def __init__(self):
@@ -505,10 +535,25 @@ class ObtainSubcommand(Subcommand):
         with open(args.filename, "w") as file:
             yaml.safe_dump(sysconfig.RawData(), file)
 
+class ApplySubcommand(Subcommand):
+    def __init__(self):
+        super().__init__("apply", "apply a configuration file to the system")
+    
+    def SetupParser(self, parser: argparse.ArgumentParser):
+        parser.add_argument("filename", type=pathlib.Path, help="load config from this file")
+        parser.add_argument("--always", 
+                            help="always apply a setting (even if system already configured in desired state)",
+                            action="store_true")
+        
+    def Go(self, args):
+        diffonly = (not args.always)
+        model = LoadAndCheckConfigFile(args.filename) # will exit(1) if error
+        ApplySystemConfig(model, diffonly)
+
 def main():
     parser = argparse.ArgumentParser("cf2", description=__doc__)
 
-    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand(), ObtainSubcommand()]
+    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand(), ObtainSubcommand(), ApplySubcommand()]
 
     subparsers = parser.add_subparsers(title = "Mode")
 
