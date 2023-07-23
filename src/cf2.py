@@ -418,25 +418,82 @@ model = ReadSystemConfig(STANDARD_METAMODEL)
 print(f"Created model succesfully!: {model.RawData()}")
 
 # ===[ USER PROCESSING ]===
-if __name__ == "__main__":
-    import argparse
-    import yaml
+import argparse
+import yaml
 
+class Subcommand(ABC):
+    __name: str
+    __help: str
+
+    def __init__(self, name: str, help: str):
+        super().__init__()
+        self.__name = name
+        self.__help = help
+
+    def Name(self) -> str:
+        return self.__name
+
+    def Help(self) -> str:
+        return self.__help
+
+    @abstractmethod
+    def SetupParser(self, parser: argparse.ArgumentParser):
+        pass
+
+    @abstractmethod
+    def Go(self, args):
+        pass
+
+class InfoSubcommand(Subcommand):
+    def __init__(self):
+        super().__init__("info", "display info about metamodel")
+
+    def SetupParser(self, parser: argparse.ArgumentParser):
+        pass
+
+    def Go(self, args):
+        STANDARD_METAMODEL.PrintTree()
+
+class TypecheckSubcommand(Subcommand):
+    def __init__(self):
+        super().__init__("typecheck", "read data from file and check types")
+    
+    def SetupParser(self, parser: argparse.ArgumentParser):
+        parser.add_argument("filename", type=pathlib.Path, help="config file to typecheck")
+    
+    def Go(self, args):
+        with open(args.filename, "r") as file:
+            rawdata = yaml.safe_load(file)
+            typecheck_results = STANDARD_METAMODEL.CreateTypecheckedModel(rawdata)
+            if typecheck_results.success:
+                print("File typechecking passed!")
+                print("Raw Data:")
+                print(rawdata)
+                exit(0)
+            else:
+                print("File typechecking failed!")
+                print("ERRORS:")
+                print("\n".join(typecheck_results.errors))
+                exit(1)
+
+def main():
     parser = argparse.ArgumentParser("cf2", description=__doc__)
-    parser.add_argument("filename", type=pathlib.Path,
-                        help="path to configuration file")
+
+    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand()]
+
+    subparsers = parser.add_subparsers(title = "Mode")
+
+    for subcmd in subcmds:
+        p = subparsers.add_parser(subcmd.Name(), help=subcmd.Help())
+        subcmd.SetupParser(p)
+        p.set_defaults(func=subcmd.Go)
+
     args = parser.parse_args()
 
-    with open(args.filename, "r") as file:
-        rawdata = yaml.safe_load(file)
-        typecheck_results = STANDARD_METAMODEL.CreateTypecheckedModel(rawdata)
-        if typecheck_results.success:
-            print("File typechecking passed!")
-            print("Raw Data:")
-            print(rawdata)
-            exit(0)
-        else:
-            print("File typechecking failed!")
-            print("ERRORS:")
-            print("\n".join(typecheck_results.errors))
-            exit(1)
+    if hasattr(args, "func"):
+        args.func(args)
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()
