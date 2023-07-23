@@ -101,6 +101,7 @@ class FileBoolPlug(Plug):
 class MetaTreeNode(ABC):
     __name: str
     __helpstring: str
+    __applyable: bool
     __parent: 'Optional[MetaTreeFixedDict]'
 
     # The Plug logic is actually decoupled from TypeChecking; we include it
@@ -108,9 +109,10 @@ class MetaTreeNode(ABC):
     # the rest of the MetaTreeNode data
     __plug: Optional[Plug]
 
-    def __init__(self, name: str, helpstring: str, **kwargs):
+    def __init__(self, name: str, helpstring: str, applyable: bool, **kwargs):
         self.__name = name
         self.__helpstring = helpstring
+        self.__applyable = applyable
         self.__parent = None
         if 'parent' in kwargs:
             self.__parent = kwargs['parent']
@@ -123,7 +125,11 @@ class MetaTreeNode(ABC):
         return self.__name
     
     def HelpString(self) -> str:
-        return self.__helpstring
+        suffix = '[Ap]' if self.Applyable() else '[RO]' 
+        return (f'{self.__helpstring} {suffix}')
+
+    def Applyable(self) -> bool:
+        return self.__applyable
 
     def Parent(self) -> 'Optional[MetaTreeFixedDict]':
         return self.__parent
@@ -148,8 +154,8 @@ class MetaTreeNode(ABC):
 class MetaTreeFixedDict(MetaTreeNode):
     __children: dict[str, 'MetaTreeNode']
 
-    def __init__(self, name: str, helpstring: str, **kwargs):
-        super().__init__(name, helpstring, **kwargs)
+    def __init__(self, name: str, helpstring: str, applyable: bool, **kwargs):
+        super().__init__(name, helpstring, applyable, **kwargs)
         self.__children = {}
 
     def Children(self) -> 'dict[str, MetaTreeNode]':
@@ -174,8 +180,8 @@ class MetaTreeFixedDict(MetaTreeNode):
 class MetaTreeScalar(MetaTreeNode):
     __ty: type
 
-    def __init__(self, name: str, helpstring: str, ty: type, **kwargs):
-        super().__init__(name, helpstring, **kwargs)
+    def __init__(self, name: str, helpstring: str, applyable: bool, ty: type, **kwargs):
+        super().__init__(name, helpstring, applyable, **kwargs)
         self.__ty = ty
 
     def Ty(self) -> type:
@@ -310,18 +316,24 @@ class MetaTreePlugWriterVisitor(MetaTreeVisitor):
 
     def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
         assert(node.Plug() is None)
+        if not node.Applyable():
+            raise NotImplemented()
+        
         for ch in node.Children():
             node[ch].AcceptVisitor(MetaTreePlugWriterVisitor(self.__diffonly, self.__rawdata[ch], self.__errlist))
 
     def VisitScalar(self, node: MetaTreeScalar) -> None:
         p = node.Plug()
         assert(p is not None)
-        if self.__diffonly:
+        if self.__diffonly or not node.Applyable():
             # If diffonly, only perform a write if value different from current
             val = p.Read()
             if val == self.__rawdata:
                 return
-        
+            elif not node.Applyable():
+                self.__errlist.append(f'{".".join(node.Path())}: difference in non-applyable value (desired = {self.__rawdata} actual = {val})')
+                return
+
         try:
             p.Write(self.__rawdata)
         except Exception as e:
@@ -383,68 +395,68 @@ class MetaModel:
 # ===[ META MODEL DEFINITION ]===
 MM_FS_PATH = pathlib.Path("/sys/kernel/mm")
 
-_TOP = MetaTreeFixedDict("top", "top node")
-_KSM = MetaTreeFixedDict("ksm", "kernel samepage merging", parent=_TOP)
-_LRU_GEN = MetaTreeFixedDict("lru_gen", "", parent=_TOP)
-_NUMA = MetaTreeFixedDict("numa", "non-uniform memory access", parent = _TOP)
-_SWAP = MetaTreeFixedDict("swap", "", parent=_TOP)
-_THP = MetaTreeFixedDict("transparent_hugepage", "transparent hugepages", parent=_TOP)
-_KHPD = MetaTreeFixedDict("khugepaged", "huge pages daemon", parent=_THP)
+_TOP = MetaTreeFixedDict("top", "top node", True)
+_KSM = MetaTreeFixedDict("ksm", "kernel samepage merging", True, parent=_TOP)
+_LRU_GEN = MetaTreeFixedDict("lru_gen", "", True, parent=_TOP)
+_NUMA = MetaTreeFixedDict("numa", "non-uniform memory access", True, parent = _TOP)
+_SWAP = MetaTreeFixedDict("swap", "", True, parent=_TOP)
+_THP = MetaTreeFixedDict("transparent_hugepage", "transparent hugepages", True, parent=_TOP)
+_KHPD = MetaTreeFixedDict("khugepaged", "huge pages daemon", True, parent=_THP)
 
 MM_KSM_PATH = MM_FS_PATH / "ksm"
-MetaTreeScalar("max_page_sharing", "", int, parent=_KSM,
+MetaTreeScalar("max_page_sharing", "", True, int, parent=_KSM,
                plug=FileIntPlug(MM_KSM_PATH / "max_page_sharing"))
-MetaTreeScalar("merge_across_nodes", "", int, parent=_KSM,
+MetaTreeScalar("merge_across_nodes", "", True, int, parent=_KSM,
                plug=FileIntPlug(MM_KSM_PATH / "merge_across_nodes"))
-MetaTreeScalar("pages_to_scan", "", int, parent=_KSM,
+MetaTreeScalar("pages_to_scan", "", True, int, parent=_KSM,
                plug=FileIntPlug(MM_KSM_PATH / "pages_to_scan"))
-MetaTreeScalar("run", "", int, parent=_KSM,
+MetaTreeScalar("run", "", True, int, parent=_KSM,
                plug=FileIntPlug(MM_KSM_PATH / "run"))
-MetaTreeScalar("sleep_millisecs", "", int, parent=_KSM,
+MetaTreeScalar("sleep_millisecs", "", True, int, parent=_KSM,
                plug=FileIntPlug(MM_KSM_PATH / "sleep_millisecs"))
-MetaTreeScalar("stable_node_chains_prune_millisecs", "", int, parent=_KSM,
+MetaTreeScalar("stable_node_chains_prune_millisecs", "", True, int, parent=_KSM,
                plug=FileIntPlug(MM_KSM_PATH / "stable_node_chains_prune_millisecs"))
-MetaTreeScalar("use_zero_pages", "", int, parent=_KSM,
+MetaTreeScalar("use_zero_pages", "", True, int, parent=_KSM,
                plug=FileIntPlug(MM_KSM_PATH / "use_zero_pages"))
 
 MM_LRU_GEN_PATH = MM_FS_PATH / "lru_gen"
-MetaTreeScalar("enabled", "", str, parent=_LRU_GEN,
+MetaTreeScalar("enabled", "", True, str, parent=_LRU_GEN,
                plug=FileStrPlug(MM_LRU_GEN_PATH / "enabled"))
-MetaTreeScalar("min_ttl_ms", "", int, parent=_LRU_GEN,
+MetaTreeScalar("min_ttl_ms", "", True, int, parent=_LRU_GEN,
                plug=FileIntPlug(MM_LRU_GEN_PATH / "min_ttl_ms"))
 
 MM_NUMA_PATH = MM_FS_PATH / "numa"
-MetaTreeScalar("demotion_enabled", "", bool, parent=_NUMA,
+MetaTreeScalar("demotion_enabled", "", True, bool, parent=_NUMA,
                plug=FileBoolPlug(MM_NUMA_PATH / "demotion_enabled"))
 
 MM_SWAP_PATH = MM_FS_PATH / "swap"
-MetaTreeScalar("vma_ra_enabled", "", bool, parent=_SWAP,
+MetaTreeScalar("vma_ra_enabled", "", True, bool, parent=_SWAP,
                plug=FileBoolPlug(MM_SWAP_PATH / "vma_ra_enabled"))
 
 MM_THP_PATH = MM_FS_PATH / "transparent_hugepage"
-MetaTreeScalar("defrag", "", str, parent=_THP,
+MetaTreeScalar("defrag", "", True, str, parent=_THP,
                plug=ThpOptionPlug(MM_THP_PATH / "defrag"))
-MetaTreeScalar("enabled", "", str, parent=_THP,
+MetaTreeScalar("enabled", "", True, str, parent=_THP,
                plug=ThpOptionPlug(MM_THP_PATH / "enabled"))
-MetaTreeScalar("hpage_pmd_size", "", int, parent=_THP,
+MetaTreeScalar("hpage_pmd_size", "", False, int, parent=_THP,
                plug=FileIntPlug(MM_THP_PATH / "hpage_pmd_size"))
-MetaTreeScalar("shmem_enabled", "", str, parent=_THP,
+MetaTreeScalar("shmem_enabled", "", True, str, parent=_THP,
                plug=ThpOptionPlug(MM_THP_PATH / "shmem_enabled"))
-MetaTreeScalar("use_zero_page", "", int, parent=_THP,
+MetaTreeScalar("use_zero_page", "", True, int, parent=_THP,
                plug=FileIntPlug(MM_THP_PATH / "use_zero_page"))
 
 MM_THP_KHPD_PATH = MM_THP_PATH / "khugepaged"
-MetaTreeScalar("alloc_sleep_millisecs", "", int, parent=_KHPD,
+MetaTreeScalar("alloc_sleep_millisecs", "", True, int, parent=_KHPD,
                plug=FileIntPlug(MM_THP_KHPD_PATH / "alloc_sleep_millisecs"))
-MetaTreeScalar("max_ptes_none", "", int, parent=_KHPD,
+MetaTreeScalar("max_ptes_none", "", True, int, parent=_KHPD,
                plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_none"))
-MetaTreeScalar("max_ptes_shared", "", int, parent=_KHPD,
+MetaTreeScalar("max_ptes_shared", "", True, int, parent=_KHPD,
                plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_shared"))
-MetaTreeScalar("max_ptes_swap", "", int, parent=_KHPD,
+MetaTreeScalar("max_ptes_swap", "", True, int, parent=_KHPD,
                plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_swap"))
-MetaTreeScalar("pages_to_scan", "", int, parent=_KHPD,
+MetaTreeScalar("pages_to_scan", "", True, int, parent=_KHPD,
                plug=FileIntPlug(MM_THP_KHPD_PATH / "pages_to_scan"))
-MetaTreeScalar("scan_sleep_millisecs", "", int, parent=_KHPD,
+MetaTreeScalar("scan_sleep_millisecs", "", True, int, parent=_KHPD,
                plug=FileIntPlug(MM_THP_KHPD_PATH / "scan_sleep_millisecs"))
 
 STANDARD_METAMODEL = MetaModel(_TOP)
@@ -491,17 +503,22 @@ import yaml
 class Subcommand(ABC):
     __name: str
     __help: str
+    __desc: str # description for help message
 
-    def __init__(self, name: str, help: str):
+    def __init__(self, name: str, help: str, desc: str = ""):
         super().__init__()
         self.__name = name
         self.__help = help
+        self.__desc = desc
 
     def Name(self) -> str:
         return self.__name
 
     def Help(self) -> str:
         return self.__help
+
+    def Desc(self) -> str:
+        return self.__desc
 
     @abstractmethod
     def SetupParser(self, parser: argparse.ArgumentParser):
@@ -513,7 +530,17 @@ class Subcommand(ABC):
 
 class InfoSubcommand(Subcommand):
     def __init__(self):
-        super().__init__("info", "display info about metamodel")
+        super().__init__("info", "display info about metamodel",
+                         "This command prints the metamodel tree."
+                         " Each field is marked as either [Ap] or [RO]."
+                         " [Ap] indicates that a field is applyable - that is,"
+                         " the tool can take action to set the system"
+                         " configuration to the desired value."
+                         " [RO] on the other hand indicates that the field is"
+                         " read only - there is no action that this tool can"
+                         " take to set its value. [RO] values"
+                         " are only checked by the \"apply\" command, even if"
+                         " --always is set.")
 
     def SetupParser(self, parser: argparse.ArgumentParser):
         pass
@@ -551,7 +578,8 @@ class ApplySubcommand(Subcommand):
     def SetupParser(self, parser: argparse.ArgumentParser):
         parser.add_argument("filename", type=pathlib.Path, help="load config from this file")
         parser.add_argument("--always", 
-                            help="always apply a setting (even if system already configured in desired state)",
+                            help="always apply a setting even if system is already configured in desired state"
+                                 " (NOTE: this does NOT apply to read-only [RO] options, which are only verified)",
                             action="store_true")
         
     def Go(self, args):
@@ -575,7 +603,7 @@ def main():
     subparsers = parser.add_subparsers(title = "Mode")
 
     for subcmd in subcmds:
-        p = subparsers.add_parser(subcmd.Name(), help=subcmd.Help())
+        p = subparsers.add_parser(subcmd.Name(), help=subcmd.Help(), description=subcmd.Desc())
         subcmd.SetupParser(p)
         p.set_defaults(func=subcmd.Go)
 
