@@ -9,6 +9,7 @@ the system into a standardized environent.
 
 from abc import ABC, abstractmethod
 import io
+import pathlib
 import sys # for stdout
 from typing import Any, IO, Optional, TextIO
 
@@ -19,12 +20,93 @@ def PrefixLines(s: str, prefix: str):
     new_lines = [f'{prefix}{l}' for l in s.splitlines(keepends=True)]
     return ''.join(new_lines)
 
+# ===[ PLUGS ]===
+class Plug(ABC):
+    @abstractmethod
+    def Read(self):
+        pass
+
+    @abstractmethod
+    def Write(self, value):
+        pass
+
+class FileStrPlug(Plug):
+    __filename: pathlib.Path
+
+    def __init__(self, filename: pathlib.Path):
+        self.__filename = filename
+    
+    def Read(self) -> str:
+        with open(self.__filename, "r") as f:
+            return f.read()
+    
+    def Write(self, value: str) -> None:
+        with open(self.__filename, "w") as f:
+            f.write(value)
+
+class ThpOptionPlug(Plug):
+    # Handle THP option files (option selected with [])
+    __fsplug: FileStrPlug
+
+    def __init__(self, filename: pathlib.Path):
+        self.__fsplug = FileStrPlug(filename)
+
+    def Read(self) -> str:
+        s = self.__fsplug.Read()
+        
+        for word in s.split():
+            if word[0] == '[' and word[-1] == ']':
+                return word[1:-1]
+        
+        raise RuntimeError("error reading thp option")
+    
+    def Write(self, value: str):
+        self.__fsplug.Write(value)
+
+class FileIntPlug(Plug):
+    # Implement as a wrapper around FileStrPlug
+    __fsplug: FileStrPlug
+
+    def __init__(self, filename: pathlib.Path):
+        self.__fsplug = FileStrPlug(filename)
+    
+    def Read(self) -> int:
+        return int(self.__fsplug.Read())
+    
+    def Write(self, value: int) -> None:
+        self.__fsplug.Write(str(value))
+    
+class FileBoolPlug(Plug):
+    # Implement as a wrapper around FileStrPlug
+    __fsplug: FileStrPlug
+
+    def __init__(self, filename: pathlib.Path):
+        self.__fsplug = FileStrPlug(filename)
+    
+    def Read(self) -> bool:
+        s = self.__fsplug.Read()
+        if s.lower() == "true":
+            return True
+        elif s.lower() == "false":
+            return False
+        else:
+            raise RuntimeError("invalid/ambiguous bool value read")
+    
+    def Write(self, value: bool) -> None:
+        s = "true" if value else "false"
+        self.__fsplug.Write(s)
+
 # ===[ META TREE STRUCTURE CLASSES ]===
 
 class MetaTreeNode(ABC):
     __name: str
     __helpstring: str
     __parent: 'Optional[MetaTreeFixedDict]'
+
+    # The Plug logic is actually decoupled from TypeChecking; we include it
+    # here for convenience but it should be thought of as being seperated from
+    # the rest of the MetaTreeNode data
+    __plug: Optional[Plug]
 
     def __init__(self, name: str, helpstring: str, **kwargs):
         self.__name = name
@@ -33,6 +115,9 @@ class MetaTreeNode(ABC):
         if 'parent' in kwargs:
             self.__parent = kwargs['parent']
             self.__parent.RegisterChild(self)
+        self.__plug = None
+        if 'plug' in kwargs:
+            self.__plug = kwargs['plug']
 
     def Name(self) -> str:
         return self.__name
@@ -56,6 +141,9 @@ class MetaTreeNode(ABC):
     @abstractmethod
     def AcceptVisitor(self, visitor: 'MetaTreeVisitor') -> None:
         pass
+
+    def Plug(self) -> Optional[Plug]:
+        return self.__plug
     
 class MetaTreeFixedDict(MetaTreeNode):
     __children: dict[str, 'MetaTreeNode']
@@ -191,6 +279,25 @@ class MetaTreeTypeChecker(MetaTreeVisitor):
         if type(self.__data) != node.Ty():
             self.__errlist.append(f"{pathstr}: type mismatch (expected: {node.TypeString()} got: {type(self.__data).__name__})")
 
+# ===[ SYSTEM SETTING COMMUNICATION ]===
+class MetaTreePlugReaderVisitor(MetaTreeVisitor):
+    __rawdata: dict[str, Any]
+
+    def __init__(self, rawdata: Any):
+        super().__init__()
+        self.__rawdata = rawdata
+
+    def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
+        assert(node.Plug() is None)
+        x = self.__rawdata[node.Name()] = {}
+        for ch in node.Children():
+            node[ch].AcceptVisitor(MetaTreePlugReaderVisitor(x))
+
+    def VisitScalar(self, node: MetaTreeScalar) -> None:
+        p = node.Plug()
+        assert(p is not None)
+        self.__rawdata[node.Name()] = p.Read()
+
 # ===[ MODEL AND METAMODEL DEFINITIONS ]===
 # Represents data that has been successfully typechecked against a metamodel
 class TypecheckedModel:
@@ -245,43 +352,74 @@ class MetaModel:
             return CreateTypecheckedModelResult(True, [], TypecheckedModel(rawdata, self))
 
 # ===[ META MODEL DEFINITION ]===
+MM_FS_PATH = pathlib.Path("/sys/kernel/mm")
+
 _TOP = MetaTreeFixedDict("top", "top node")
 _KSM = MetaTreeFixedDict("ksm", "kernel samepage merging", parent=_TOP)
-MetaTreeScalar("max_page_sharing", "", int, parent=_KSM)
-MetaTreeScalar("merge_across_nodes", "", int, parent=_KSM)
-MetaTreeScalar("pages_to_scan", "", int, parent=_KSM)
-MetaTreeScalar("run", "", int, parent=_KSM)
-MetaTreeScalar("sleep_millisecs", "", int, parent=_KSM)
-MetaTreeScalar("stable_node_chains_prune_millisecs", "", int, parent=_KSM)
-MetaTreeScalar("use_zero_pages", "", int, parent=_KSM)
 _LRU_GEN = MetaTreeFixedDict("lru_gen", "", parent=_TOP)
-MetaTreeScalar("enabled", "", str, parent=_LRU_GEN)
-MetaTreeScalar("min_ttl_ms", "", int, parent=_LRU_GEN)
 _NUMA = MetaTreeFixedDict("numa", "non-uniform memory access", parent = _TOP)
-MetaTreeScalar("demotion_enabled", "", bool, parent=_NUMA)
 _SWAP = MetaTreeFixedDict("swap", "", parent=_TOP)
-MetaTreeScalar("vma_ra_enabled", "", bool, parent=_SWAP)
 _THP = MetaTreeFixedDict("transparent_hugepage", "transparent hugepages", parent=_TOP)
-MetaTreeScalar("defrag", "", str, parent=_THP)
-MetaTreeScalar("enabled", "", str, parent=_THP)
-MetaTreeScalar("hpage_pmd_size", "", int, parent=_THP)
 _KHPD = MetaTreeFixedDict("khugepaged", "huge pages daemon", parent=_THP)
-MetaTreeScalar("alloc_sleep_millisecs", "", int, parent=_KHPD)
-MetaTreeScalar("max_ptes_none", "", int, parent=_KHPD)
-MetaTreeScalar("max_ptes_shared", "", int, parent=_KHPD)
-MetaTreeScalar("max_ptes_swap", "", int, parent=_KHPD)
-MetaTreeScalar("pages_to_scan", "", int, parent=_KHPD)
-MetaTreeScalar("scan_sleep_millisecs", "", int, parent=_KHPD)
-MetaTreeScalar("shmem_enabled", "", str, parent=_THP)
-MetaTreeScalar("use_zero_page", "", int, parent=_THP)
+
+MM_KSM_PATH = MM_FS_PATH / "ksm"
+MetaTreeScalar("max_page_sharing", "", int, parent=_KSM,
+               plug=FileIntPlug(MM_KSM_PATH / "max_page_sharing"))
+MetaTreeScalar("merge_across_nodes", "", int, parent=_KSM,
+               plug=FileIntPlug(MM_KSM_PATH / "merge_across_nodes"))
+MetaTreeScalar("pages_to_scan", "", int, parent=_KSM,
+               plug=FileIntPlug(MM_KSM_PATH / "pages_to_scan"))
+MetaTreeScalar("run", "", int, parent=_KSM,
+               plug=FileIntPlug(MM_KSM_PATH / "run"))
+MetaTreeScalar("sleep_millisecs", "", int, parent=_KSM,
+               plug=FileIntPlug(MM_KSM_PATH / "sleep_millisecs"))
+MetaTreeScalar("stable_node_chains_prune_millisecs", "", int, parent=_KSM,
+               plug=FileIntPlug(MM_KSM_PATH / "stable_node_chains_prune_millisecs"))
+MetaTreeScalar("use_zero_pages", "", int, parent=_KSM,
+               plug=FileIntPlug(MM_KSM_PATH / "use_zero_pages"))
+
+# TODO: Plugs for the following
+
+#MetaTreeScalar("enabled", "", str, parent=_LRU_GEN)
+#MetaTreeScalar("min_ttl_ms", "", int, parent=_LRU_GEN)
+
+#MetaTreeScalar("demotion_enabled", "", bool, parent=_NUMA)
+
+#MetaTreeScalar("vma_ra_enabled", "", bool, parent=_SWAP)
+
+#MetaTreeScalar("defrag", "", str, parent=_THP)
+#MetaTreeScalar("enabled", "", str, parent=_THP)
+#MetaTreeScalar("hpage_pmd_size", "", int, parent=_THP)
+
+#MetaTreeScalar("alloc_sleep_millisecs", "", int, parent=_KHPD)
+#MetaTreeScalar("max_ptes_none", "", int, parent=_KHPD)
+#MetaTreeScalar("max_ptes_shared", "", int, parent=_KHPD)
+#MetaTreeScalar("max_ptes_swap", "", int, parent=_KHPD)
+#MetaTreeScalar("pages_to_scan", "", int, parent=_KHPD)
+#MetaTreeScalar("scan_sleep_millisecs", "", int, parent=_KHPD)
+#MetaTreeScalar("shmem_enabled", "", str, parent=_THP)
+#MetaTreeScalar("use_zero_page", "", int, parent=_THP)
 
 STANDARD_METAMODEL = MetaModel(_TOP)
 # STANDARD_METAMODEL.PrintTree()
 
+def ReadSystemConfig(metamodel: MetaModel) -> TypecheckedModel:
+    rawdata = {}
+    reader = MetaTreePlugReaderVisitor(rawdata)
+    metamodel.Root().AcceptVisitor(reader)
+    result = metamodel.CreateTypecheckedModel(rawdata["top"])
+    if result.success:
+        assert(result.model is not None)
+        return result.model
+    else:
+        raise RuntimeError(f'errors when typechecking read system rawdata:\n {",".join(result.errors)}')
+
+model = ReadSystemConfig(STANDARD_METAMODEL)
+print(f"Created model succesfully!: {model.RawData()}")
+
 # ===[ USER PROCESSING ]===
 if __name__ == "__main__":
     import argparse
-    import pathlib
     import yaml
 
     parser = argparse.ArgumentParser("cf2", description=__doc__)
