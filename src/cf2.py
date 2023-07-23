@@ -38,7 +38,7 @@ class FileStrPlug(Plug):
     
     def Read(self) -> str:
         with open(self.__filename, "r") as f:
-            return f.read()
+            return f.read().rstrip()
     
     def Write(self, value: str) -> None:
         with open(self.__filename, "w") as f:
@@ -84,7 +84,7 @@ class FileBoolPlug(Plug):
         self.__fsplug = FileStrPlug(filename)
     
     def Read(self) -> bool:
-        s = self.__fsplug.Read().rstrip()
+        s = self.__fsplug.Read()
         if s.lower() == "true":
             return True
         elif s.lower() == "false":
@@ -493,10 +493,22 @@ class TypecheckSubcommand(Subcommand):
                 print("\n".join(typecheck_results.errors))
                 exit(1)
 
+class ObtainSubcommand(Subcommand):
+    def __init__(self):
+        super().__init__("obtain", "obtain current system configuration and store in file")
+    
+    def SetupParser(self, parser: argparse.ArgumentParser):
+        parser.add_argument("filename", type=pathlib.Path, help="save config to this file")
+    
+    def Go(self, args):
+        sysconfig = ReadSystemConfig(STANDARD_METAMODEL)
+        with open(args.filename, "w") as file:
+            yaml.safe_dump(sysconfig.RawData(), file)
+
 def main():
     parser = argparse.ArgumentParser("cf2", description=__doc__)
 
-    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand()]
+    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand(), ObtainSubcommand()]
 
     subparsers = parser.add_subparsers(title = "Mode")
 
