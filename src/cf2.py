@@ -84,7 +84,7 @@ class FileBoolPlug(Plug):
         self.__fsplug = FileStrPlug(filename)
     
     def Read(self) -> bool:
-        s = self.__fsplug.Read()
+        s = self.__fsplug.Read().rstrip()
         if s.lower() == "true":
             return True
         elif s.lower() == "false":
@@ -378,30 +378,47 @@ MetaTreeScalar("stable_node_chains_prune_millisecs", "", int, parent=_KSM,
 MetaTreeScalar("use_zero_pages", "", int, parent=_KSM,
                plug=FileIntPlug(MM_KSM_PATH / "use_zero_pages"))
 
-# TODO: Plugs for the following
+MM_LRU_GEN_PATH = MM_FS_PATH / "lru_gen"
+MetaTreeScalar("enabled", "", str, parent=_LRU_GEN,
+               plug=FileStrPlug(MM_LRU_GEN_PATH / "enabled"))
+MetaTreeScalar("min_ttl_ms", "", int, parent=_LRU_GEN,
+               plug=FileIntPlug(MM_LRU_GEN_PATH / "min_ttl_ms"))
 
-#MetaTreeScalar("enabled", "", str, parent=_LRU_GEN)
-#MetaTreeScalar("min_ttl_ms", "", int, parent=_LRU_GEN)
+MM_NUMA_PATH = MM_FS_PATH / "numa"
+MetaTreeScalar("demotion_enabled", "", bool, parent=_NUMA,
+               plug=FileBoolPlug(MM_NUMA_PATH / "demotion_enabled"))
 
-#MetaTreeScalar("demotion_enabled", "", bool, parent=_NUMA)
+MM_SWAP_PATH = MM_FS_PATH / "swap"
+MetaTreeScalar("vma_ra_enabled", "", bool, parent=_SWAP,
+               plug=FileBoolPlug(MM_SWAP_PATH / "vma_ra_enabled"))
 
-#MetaTreeScalar("vma_ra_enabled", "", bool, parent=_SWAP)
+MM_THP_PATH = MM_FS_PATH / "transparent_hugepage"
+MetaTreeScalar("defrag", "", str, parent=_THP,
+               plug=ThpOptionPlug(MM_THP_PATH / "defrag"))
+MetaTreeScalar("enabled", "", str, parent=_THP,
+               plug=ThpOptionPlug(MM_THP_PATH / "enabled"))
+MetaTreeScalar("hpage_pmd_size", "", int, parent=_THP,
+               plug=FileIntPlug(MM_THP_PATH / "hpage_pmd_size"))
+MetaTreeScalar("shmem_enabled", "", str, parent=_THP,
+               plug=ThpOptionPlug(MM_THP_PATH / "shmem_enabled"))
+MetaTreeScalar("use_zero_page", "", int, parent=_THP,
+               plug=FileIntPlug(MM_THP_PATH / "use_zero_page"))
 
-#MetaTreeScalar("defrag", "", str, parent=_THP)
-#MetaTreeScalar("enabled", "", str, parent=_THP)
-#MetaTreeScalar("hpage_pmd_size", "", int, parent=_THP)
-
-#MetaTreeScalar("alloc_sleep_millisecs", "", int, parent=_KHPD)
-#MetaTreeScalar("max_ptes_none", "", int, parent=_KHPD)
-#MetaTreeScalar("max_ptes_shared", "", int, parent=_KHPD)
-#MetaTreeScalar("max_ptes_swap", "", int, parent=_KHPD)
-#MetaTreeScalar("pages_to_scan", "", int, parent=_KHPD)
-#MetaTreeScalar("scan_sleep_millisecs", "", int, parent=_KHPD)
-#MetaTreeScalar("shmem_enabled", "", str, parent=_THP)
-#MetaTreeScalar("use_zero_page", "", int, parent=_THP)
+MM_THP_KHPD_PATH = MM_THP_PATH / "khugepaged"
+MetaTreeScalar("alloc_sleep_millisecs", "", int, parent=_KHPD,
+               plug=FileIntPlug(MM_THP_KHPD_PATH / "alloc_sleep_millisecs"))
+MetaTreeScalar("max_ptes_none", "", int, parent=_KHPD,
+               plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_none"))
+MetaTreeScalar("max_ptes_shared", "", int, parent=_KHPD,
+               plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_shared"))
+MetaTreeScalar("max_ptes_swap", "", int, parent=_KHPD,
+               plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_swap"))
+MetaTreeScalar("pages_to_scan", "", int, parent=_KHPD,
+               plug=FileIntPlug(MM_THP_KHPD_PATH / "pages_to_scan"))
+MetaTreeScalar("scan_sleep_millisecs", "", int, parent=_KHPD,
+               plug=FileIntPlug(MM_THP_KHPD_PATH / "scan_sleep_millisecs"))
 
 STANDARD_METAMODEL = MetaModel(_TOP)
-# STANDARD_METAMODEL.PrintTree()
 
 def ReadSystemConfig(metamodel: MetaModel) -> TypecheckedModel:
     rawdata = {}
@@ -415,7 +432,7 @@ def ReadSystemConfig(metamodel: MetaModel) -> TypecheckedModel:
         raise RuntimeError(f'errors when typechecking read system rawdata:\n {",".join(result.errors)}')
 
 model = ReadSystemConfig(STANDARD_METAMODEL)
-print(f"Created model succesfully!: {model.RawData()}")
+# print(f"Created model succesfully!: {model.RawData()}")
 
 # ===[ USER PROCESSING ]===
 import argparse
@@ -467,8 +484,8 @@ class TypecheckSubcommand(Subcommand):
             typecheck_results = STANDARD_METAMODEL.CreateTypecheckedModel(rawdata)
             if typecheck_results.success:
                 print("File typechecking passed!")
-                print("Raw Data:")
-                print(rawdata)
+                #print("Raw Data:")
+                #print(rawdata)
                 exit(0)
             else:
                 print("File typechecking failed!")
