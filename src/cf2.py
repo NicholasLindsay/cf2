@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-"""Configurator.
+"""cf2.
 
 This tool is for bringing a Linux system into a certain configuration.
 The intended usecase is to enable reproducible experiments by bringing
