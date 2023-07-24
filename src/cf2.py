@@ -365,6 +365,46 @@ class CreateTypecheckedModelResult:
         self.errors = errors
         self.model = model
 
+# ===[ MODEL COMPARISON ]===
+
+class MetaTreeDiffVisitor(MetaTreeVisitor):
+    __left: Any
+    __right: Any
+    __leftname: str
+    __rightname: str
+    __difflist: list[str]
+
+    def __init__(self, left: Any, right: Any, leftname: str, rightname: str, difflist: list[str]) -> None:
+        super().__init__()
+        self.__left = left
+        self.__right = right
+        self.__leftname = leftname
+        self.__rightname = rightname
+        self.__difflist = difflist
+    
+    def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
+        # Assume: self.__left and self.__right have same keys
+        for k in node.Children():
+            node[k].AcceptVisitor(MetaTreeDiffVisitor(self.__left[k], self.__right[k], self.__leftname, 
+                                                      self.__rightname, self.__difflist))
+
+    def VisitScalar(self, node: MetaTreeScalar) -> None:
+        # Assume: self.__left and self.__right have same type
+        if self.__left != self.__right:
+            s = f"{node.Name()}: {self.__leftname} = {self.__left} | {self.__rightname} = {self.__right}"
+            self.__difflist.append(s)
+
+def DiffTypecheckedModels(left: TypecheckedModel, 
+                          right: TypecheckedModel, 
+                          leftname: str, 
+                          rightname: str) -> list[str]:
+    assert(left.MetaModel() == right.MetaModel())
+    metamodel = left.MetaModel()
+    difflist = []
+    visitor = MetaTreeDiffVisitor(left.RawData(), right.RawData(), leftname, rightname, difflist)
+    metamodel.Root().AcceptVisitor(visitor)
+    return difflist
+
 # Encapsulate a MetaModel tree within a "MetaModel"
 class MetaModel:
     __root: MetaTreeNode
@@ -595,10 +635,30 @@ class ApplySubcommand(Subcommand):
             print('\n'.join(errlist))
             exit(1)
 
+class VerifySubcommand(Subcommand):
+    def __init__(self):
+        super().__init__("verify", "verify that the system configuration matches config file")
+    
+    def SetupParser(self, parser: argparse.ArgumentParser):
+        parser.add_argument("filename", type=pathlib.Path, help="config to verify against")
+
+    def Go(self, args):
+        model = LoadAndCheckConfigFile(args.filename)
+        sysconfig = ReadSystemConfig(STANDARD_METAMODEL)
+        difflist = DiffTypecheckedModels(model, sysconfig, "file", "system")
+        if not difflist:
+            print("Verify OK.")
+            exit(0)
+        else:
+            print("Verify FAILED!")
+            print("Differences:")
+            print('\n'.join(difflist))
+            exit(1)
+
 def main():
     parser = argparse.ArgumentParser("cf2", description=__doc__)
 
-    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand(), ObtainSubcommand(), ApplySubcommand()]
+    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand(), ObtainSubcommand(), ApplySubcommand(), VerifySubcommand()]
 
     subparsers = parser.add_subparsers(title = "Mode")
 

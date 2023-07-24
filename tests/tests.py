@@ -6,14 +6,14 @@ import unittest
 from src.cf2 import *
 
 # ===[ Simple MetaModel used by tests ]===
-TOP = MetaTreeFixedDict("top", "i am top")
-BAR = MetaTreeScalar("bar", "i am bar", int, parent=TOP)
-BAZ = MetaTreeFixedDict("baz", "i am baz", parent=TOP)
-MetaTreeScalar("name", "person's name", str, parent=BAZ)
-MetaTreeScalar("age", "person's age", int, parent=BAZ)
-TEAMS = MetaTreeFixedDict("teams", "sports teams", parent=TOP)
-MetaTreeScalar("soccer", "soccer", str, parent=TEAMS)
-MetaTreeScalar("nfl", "american football", str, parent=TEAMS)
+TOP = MetaTreeFixedDict("top", "i am top", True)
+BAR = MetaTreeScalar("bar", "i am bar", True, int, parent=TOP)
+BAZ = MetaTreeFixedDict("baz", "i am baz", True, parent=TOP)
+MetaTreeScalar("name", "person's name", True, str, parent=BAZ)
+MetaTreeScalar("age", "person's age", False, int, parent=BAZ)
+TEAMS = MetaTreeFixedDict("teams", "sports teams", True, parent=TOP)
+MetaTreeScalar("soccer", "soccer", True, str, parent=TEAMS)
+MetaTreeScalar("nfl", "american football", True, str, parent=TEAMS)
 TEST_METAMODEL = MetaModel(TOP)
 
 # ===[ Data used by tests ]===
@@ -76,14 +76,14 @@ class TestPrintTree(unittest.TestCase):
         TEST_METAMODEL.PrintTree(strio)
         s = strio.getvalue()
         expected = """\
-top: i am top
- ├── bar: i am bar [Type = int]
- ├── baz: i am baz
- │   ├── name: person's name [Type = str]
- │   └── age: person's age [Type = int]
- └── teams: sports teams
-     ├── soccer: soccer [Type = str]
-     └── nfl: american football [Type = str]
+top: i am top [Ap]
+ ├── bar: i am bar [Ap] [Type = int]
+ ├── baz: i am baz [Ap]
+ │   ├── name: person's name [Ap] [Type = str]
+ │   └── age: person's age [RO] [Type = int]
+ └── teams: sports teams [Ap]
+     ├── soccer: soccer [Ap] [Type = str]
+     └── nfl: american football [Ap] [Type = str]
 """
         self.assertEqual(s, expected)
 
