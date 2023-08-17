@@ -3,11 +3,23 @@
 Its intended purpose is to provide a reproducible platform to run system level
 experiments.
 
+# Setup
+First `cd` into the project root directory.
+Then run `setup.sh` in the project root directory to set up the project's Python virtual environment.
+
+> **Important:** You **MUST** run `setup.sh` **WHILST** the project directory is the current working directory in order for the scripts in `bin` to work.
+
+A convenience script `cf2` to run the tool is provided in the `bin` directory.
+The purpose of this script is to let you use `cf2` from the command line without having to worry about virtual environments etc.
+Under the hood, `bin/cf2` switches to the virtual environment and runs the actual cf2 Python script.
+Make `bin/cf2` available on `$PATH` and it will be usable from anywhere.
+
 # Requirements
 `cf2` has been tested with Python 3.11.4.
 
 `cf2` uses _PyYAML_ to read/write YAML files.
-Try installing _PyYAML_ with `python3 -m pip install pyyaml`.
+If running `cf2` outside of the provided virtual environment setup (creating by running `setup.sh`), you need to install _PyYAML_.
+Install PyYAML (preferably within a virtual environment) with `python3 -m pip install pyyaml`.
 
 # Documentation
 ## Usage

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+# Get absolute path of this script (thanks ChatGPT for this!):
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -h "$SCRIPT_PATH" ]; do
+    SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_PATH" )" && pwd )"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_PATH" )" && pwd )"
+
+# Source virtual environment
+ACTIVATE_SCRIPT="${SCRIPT_DIR}/../venv/bin/activate"
+if [ ! -e "${ACTIVATE_SCRIPT}" ]
+then
+    >&2 echo "venv activate script does not exist. Did you remember to set up the virtual enviroment?"
+    exit 1
+fi
+source "${ACTIVATE_SCRIPT}"
+
+# Run command
+python3 "${SCRIPT_DIR}/../src/cf2.py" "$@"
+
+# Deactivate virtual environment
+deactivate
+
