@@ -10,6 +10,7 @@ the system into a standardized environent.
 from abc import ABC, abstractmethod
 import io
 import pathlib
+import platform # for platform.uname()
 import sys # for stdout
 from typing import Any, IO, Optional, TextIO
 
@@ -20,6 +21,50 @@ def PrefixLines(s: str, prefix: str):
     new_lines = [f'{prefix}{l}' for l in s.splitlines(keepends=True)]
     return ''.join(new_lines)
 
+# === [ Helper functions for kernel version processing ]===
+
+# Using the terminology from https://askubuntu.com/a/843198:
+class KernelVersionNumber:
+    w: int
+    x: int
+    y: int
+    z: int
+    suffix: str
+
+    def __init__(self, version_string: str):
+        # Version string of style: w.x.y-z-suffix
+        top_split = version_string.split('-')
+        bottom_split = top_split[0].split('.')
+        self.w = int(bottom_split[0])
+        self.x = int(bottom_split[1])
+        self.y = int(bottom_split[2])
+        self.z = int(top_split[1])
+        if len(top_split) == 3:
+            self.suffix = top_split[2]
+        else:
+            self.suffix = ''
+    
+    def __eq__(self, other: 'KernelVersionNumber') -> bool:
+        return ((self.w == other.w) and (self.x == other.x)
+                                    and (self.y == other.y)
+                                    and (self.z == other.z)
+                                    and (self.suffix == other.suffix))
+
+    def __str__(self) -> str:
+        base =  f'{self.w}.{self.x}.{self.y}-{self.z}'
+        if self.suffix != '':
+            base += f'-{self.suffix}'
+        return base
+
+    def __repr__(self) -> str:
+        class_name = type(self).__name__
+        return f'{class_name}("{str(self)}")'
+
+def GetKernelVersion() -> KernelVersionNumber:
+    version_str = platform.uname().release
+    version = KernelVersionNumber(version_str)
+    return version
+
 # ===[ PLUGS ]===
 class Plug(ABC):
     @abstractmethod
@@ -29,6 +74,13 @@ class Plug(ABC):
     @abstractmethod
     def Write(self, value):
         pass
+
+class KernelVersionPlug(Plug):
+    def Read(self) -> KernelVersionNumber:
+        return GetKernelVersion()
+
+    def Write(self, value: KernelVersionNumber):
+        raise RuntimeError('cannot write kernel version number')
 
 class FileStrPlug(Plug):
     __filename: pathlib.Path
@@ -196,7 +248,36 @@ class MetaTreeScalar(MetaTreeNode):
     
     def AcceptVisitor(self, visitor: 'MetaTreeVisitor') -> None:
         return visitor.VisitScalar(self)
+
+
+# ===[ KERNEL VERSION CUSTOM LOGIC ]===
+# Custom code to handle kernel version numbers in meta tree
+class KvnPlug(Plug):
+    def Read(self) -> dict[str, any]:
+        kvn = GetKernelVersion()
+        ret = {
+                'w' : kvn.w,
+                'x' : kvn.x,
+                'y' : kvn.y,
+                'z' : kvn.z,
+                'suffix' : kvn.suffix
+              }
+        return ret
     
+    def Write(self, value: int) -> None:
+        raise RuntimeError('cannot write kernel version number')
+
+class MetaTreeKvn(MetaTreeFixedDict):
+    # Special class for handling kernel version numbers
+    def __init__(self, name: str, helpstring: str, **kwargs):
+        super().__init__(name, helpstring, False, plug = KvnPlug(), **kwargs)
+        MetaTreeScalar('w', 'w component of version name', False, int, parent=self)
+        MetaTreeScalar('x', 'x component of version name', False, int, parent=self)
+        MetaTreeScalar('y', 'y component of version name', False, int, parent=self)
+        MetaTreeScalar('z', 'z component of version name', False, int, parent=self)
+        MetaTreeScalar('suffix', 'suffix component of version name',\
+                       False, str, parent=self)
+
 # ===[ META TREE VISITOR CLASSES ]===
 class MetaTreeVisitor(ABC):
     @abstractmethod
@@ -294,10 +375,15 @@ class MetaTreePlugReaderVisitor(MetaTreeVisitor):
         self.__rawdata = rawdata
 
     def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
-        assert(node.Plug() is None)
-        x = self.__rawdata[node.Name()] = {}
-        for ch in node.Children():
-            node[ch].AcceptVisitor(MetaTreePlugReaderVisitor(x))
+        # Some FixedDict nodes might have a custom plug
+        if node.Plug() is not None:
+            p = node.Plug()
+            self.__rawdata[node.Name()] = p.Read()
+        # ... otherwise run the child plugs elementwise
+        else:
+            x = self.__rawdata[node.Name()] = {}
+            for ch in node.Children():
+                node[ch].AcceptVisitor(MetaTreePlugReaderVisitor(x))
 
     def VisitScalar(self, node: MetaTreeScalar) -> None:
         p = node.Plug()
@@ -314,31 +400,41 @@ class MetaTreePlugWriterVisitor(MetaTreeVisitor):
         self.__rawdata = rawdata
         self.__errlist = errlist
 
-    def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
-        assert(node.Plug() is None)
-        if not node.Applyable():
-            raise NotImplemented()
-        
-        for ch in node.Children():
-            node[ch].AcceptVisitor(MetaTreePlugWriterVisitor(self.__diffonly, self.__rawdata[ch], self.__errlist))
-
-    def VisitScalar(self, node: MetaTreeScalar) -> None:
-        p = node.Plug()
-        assert(p is not None)
+    def __TryWriteIfNeeded(self, node: MetaTreeNode, p: Plug) -> Optional[str]:
+        # Returns none if success, or an error string if an error
         if self.__diffonly or not node.Applyable():
             # If diffonly, only perform a write if value different from current
             val = p.Read()
             if val == self.__rawdata:
-                return
+                return None
             elif not node.Applyable():
-                self.__errlist.append(f'{".".join(node.Path())}: difference in non-applyable value (desired = {self.__rawdata} actual = {val})')
-                return
+                return f'{".".join(node.Path())}: difference in non-applyable value (desired = {self.__rawdata} actual = {val})'
 
         try:
             p.Write(self.__rawdata)
+            return None
         except Exception as e:
-            self.__errlist.append(f'When applying {".".join(node.Path())}: {e}')  
+            return f'When applying {".".join(node.Path())}: {e}'
 
+    def VisitFixedDict(self, node: MetaTreeFixedDict) -> None:
+        # Some FixedDicts may have custom Plugs
+        if node.Plug() is not None:
+            err: Optional[str] = self.__TryWriteIfNeeded(node, node.Plug())
+            if err is not None:
+                self.__errlist.append(err)
+        # ... otherwise use child plugs elementwise
+        else:
+            if not node.Applyable():
+                raise NotImplemented()
+            
+            for ch in node.Children():
+                node[ch].AcceptVisitor(MetaTreePlugWriterVisitor(self.__diffonly, self.__rawdata[ch], self.__errlist))
+
+    def VisitScalar(self, node: MetaTreeScalar) -> None:
+        p = node.Plug()
+        assert(p is not None)
+        self.__TryWriteIfNeeded(node, p)
+ 
 # ===[ MODEL AND METAMODEL DEFINITIONS ]===
 # Represents data that has been successfully typechecked against a metamodel
 class TypecheckedModel:
@@ -398,7 +494,7 @@ def DiffTypecheckedModels(left: TypecheckedModel,
                           right: TypecheckedModel, 
                           leftname: str, 
                           rightname: str) -> list[str]:
-    assert(left.MetaModel() == right.MetaModel())
+    # TODO: Handle case where left and right metamodels aree different
     metamodel = left.MetaModel()
     difflist = []
     visitor = MetaTreeDiffVisitor(left.RawData(), right.RawData(), leftname, rightname, difflist)
@@ -433,73 +529,91 @@ class MetaModel:
             return CreateTypecheckedModelResult(True, [], TypecheckedModel(rawdata, self))
 
 # ===[ META MODEL DEFINITION ]===
-MM_FS_PATH = pathlib.Path("/sys/kernel/mm")
 
-_TOP = MetaTreeFixedDict("top", "top node", True)
-_KSM = MetaTreeFixedDict("ksm", "kernel samepage merging", True, parent=_TOP)
-_LRU_GEN = MetaTreeFixedDict("lru_gen", "", True, parent=_TOP)
-_NUMA = MetaTreeFixedDict("numa", "non-uniform memory access", True, parent = _TOP)
-_SWAP = MetaTreeFixedDict("swap", "", True, parent=_TOP)
-_THP = MetaTreeFixedDict("transparent_hugepage", "transparent hugepages", True, parent=_TOP)
-_KHPD = MetaTreeFixedDict("khugepaged", "huge pages daemon", True, parent=_THP)
+# Given a kernel version number, generate the MetaModel
+def GenerateMetamodel(kvn: KernelVersionNumber) -> MetaModel:
+    # Prepare the tree
+    node_top = MetaTreeFixedDict("top", "top node", True)
+   
+    # Track the OS version
+    MetaTreeKvn("kvn", "kernel version number", parent=node_top)
 
-MM_KSM_PATH = MM_FS_PATH / "ksm"
-MetaTreeScalar("max_page_sharing", "", True, int, parent=_KSM,
-               plug=FileIntPlug(MM_KSM_PATH / "max_page_sharing"))
-MetaTreeScalar("merge_across_nodes", "", True, int, parent=_KSM,
-               plug=FileIntPlug(MM_KSM_PATH / "merge_across_nodes"))
-MetaTreeScalar("pages_to_scan", "", True, int, parent=_KSM,
-               plug=FileIntPlug(MM_KSM_PATH / "pages_to_scan"))
-MetaTreeScalar("run", "", True, int, parent=_KSM,
-               plug=FileIntPlug(MM_KSM_PATH / "run"))
-MetaTreeScalar("sleep_millisecs", "", True, int, parent=_KSM,
-               plug=FileIntPlug(MM_KSM_PATH / "sleep_millisecs"))
-MetaTreeScalar("stable_node_chains_prune_millisecs", "", True, int, parent=_KSM,
-               plug=FileIntPlug(MM_KSM_PATH / "stable_node_chains_prune_millisecs"))
-MetaTreeScalar("use_zero_pages", "", True, int, parent=_KSM,
-               plug=FileIntPlug(MM_KSM_PATH / "use_zero_pages"))
+    # Prepare the memory management related configuration options
+    MM_FS_PATH = pathlib.Path("/sys/kernel/mm")
 
-MM_LRU_GEN_PATH = MM_FS_PATH / "lru_gen"
-MetaTreeScalar("enabled", "", True, str, parent=_LRU_GEN,
-               plug=FileStrPlug(MM_LRU_GEN_PATH / "enabled"))
-MetaTreeScalar("min_ttl_ms", "", True, int, parent=_LRU_GEN,
-               plug=FileIntPlug(MM_LRU_GEN_PATH / "min_ttl_ms"))
+    node_ksm = MetaTreeFixedDict("ksm", "kernel samepage merging", True, parent=node_top)
+    node_numa = MetaTreeFixedDict("numa", "non-uniform memory access", True, parent = node_top)
+    node_swap = MetaTreeFixedDict("swap", "", True, parent=node_top)
+    node_thp = MetaTreeFixedDict("transparent_hugepage", "transparent hugepages", True, parent=node_top)
+    node_khpd = MetaTreeFixedDict("khugepaged", "huge pages daemon", True, parent=node_thp)
 
-MM_NUMA_PATH = MM_FS_PATH / "numa"
-MetaTreeScalar("demotion_enabled", "", True, bool, parent=_NUMA,
-               plug=FileBoolPlug(MM_NUMA_PATH / "demotion_enabled"))
+    MM_KSM_PATH = MM_FS_PATH / "ksm"
+    MetaTreeScalar("max_page_sharing", "", True, int, parent=node_ksm,
+                   plug=FileIntPlug(MM_KSM_PATH / "max_page_sharing"))
+    MetaTreeScalar("merge_across_nodes", "", True, int, parent=node_ksm,
+                   plug=FileIntPlug(MM_KSM_PATH / "merge_across_nodes"))
+    MetaTreeScalar("pages_to_scan", "", True, int, parent=node_ksm,
+                   plug=FileIntPlug(MM_KSM_PATH / "pages_to_scan"))
+    MetaTreeScalar("run", "", True, int, parent=node_ksm,
+                   plug=FileIntPlug(MM_KSM_PATH / "run"))
+    MetaTreeScalar("sleep_millisecs", "", True, int, parent=node_ksm,
+                   plug=FileIntPlug(MM_KSM_PATH / "sleep_millisecs"))
+    MetaTreeScalar("stable_node_chains_prune_millisecs", "", True, int, parent=node_ksm,
+                   plug=FileIntPlug(MM_KSM_PATH / "stable_node_chains_prune_millisecs"))
+    MetaTreeScalar("use_zero_pages", "", True, int, parent=node_ksm,
+                   plug=FileIntPlug(MM_KSM_PATH / "use_zero_pages"))
 
-MM_SWAP_PATH = MM_FS_PATH / "swap"
-MetaTreeScalar("vma_ra_enabled", "", True, bool, parent=_SWAP,
-               plug=FileBoolPlug(MM_SWAP_PATH / "vma_ra_enabled"))
+    # Assume MGLRU was released in Linux 6.1:
+    # (see https://www.phoronix.com/news/Linux-6.1-rc1-Released)
+    if (kvn.w == 6 and (kvn.x >= 1)):
+        node_lru_gen = MetaTreeFixedDict("lru_gen", "", True, parent=node_top)
+        MM_LRU_GEN_PATH = MM_FS_PATH / "lru_gen"
+        MetaTreeScalar("enabled", "", True, str, parent=node_lru_gen,
+                       plug=FileStrPlug(MM_LRU_GEN_PATH / "enabled"))
+        MetaTreeScalar("min_ttl_ms", "", True, int, parent=node_lru_gen,
+                       plug=FileIntPlug(MM_LRU_GEN_PATH / "min_ttl_ms"))
 
-MM_THP_PATH = MM_FS_PATH / "transparent_hugepage"
-MetaTreeScalar("defrag", "", True, str, parent=_THP,
-               plug=ThpOptionPlug(MM_THP_PATH / "defrag"))
-MetaTreeScalar("enabled", "", True, str, parent=_THP,
-               plug=ThpOptionPlug(MM_THP_PATH / "enabled"))
-MetaTreeScalar("hpage_pmd_size", "", False, int, parent=_THP,
-               plug=FileIntPlug(MM_THP_PATH / "hpage_pmd_size"))
-MetaTreeScalar("shmem_enabled", "", True, str, parent=_THP,
-               plug=ThpOptionPlug(MM_THP_PATH / "shmem_enabled"))
-MetaTreeScalar("use_zero_page", "", True, int, parent=_THP,
-               plug=FileIntPlug(MM_THP_PATH / "use_zero_page"))
+    MM_NUMA_PATH = MM_FS_PATH / "numa"
+    MetaTreeScalar("demotion_enabled", "", True, bool, parent=node_numa,
+                   plug=FileBoolPlug(MM_NUMA_PATH / "demotion_enabled"))
 
-MM_THP_KHPD_PATH = MM_THP_PATH / "khugepaged"
-MetaTreeScalar("alloc_sleep_millisecs", "", True, int, parent=_KHPD,
-               plug=FileIntPlug(MM_THP_KHPD_PATH / "alloc_sleep_millisecs"))
-MetaTreeScalar("max_ptes_none", "", True, int, parent=_KHPD,
-               plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_none"))
-MetaTreeScalar("max_ptes_shared", "", True, int, parent=_KHPD,
-               plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_shared"))
-MetaTreeScalar("max_ptes_swap", "", True, int, parent=_KHPD,
-               plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_swap"))
-MetaTreeScalar("pages_to_scan", "", True, int, parent=_KHPD,
-               plug=FileIntPlug(MM_THP_KHPD_PATH / "pages_to_scan"))
-MetaTreeScalar("scan_sleep_millisecs", "", True, int, parent=_KHPD,
-               plug=FileIntPlug(MM_THP_KHPD_PATH / "scan_sleep_millisecs"))
+    MM_SWAP_PATH = MM_FS_PATH / "swap"
+    MetaTreeScalar("vma_ra_enabled", "", True, bool, parent=node_swap,
+                   plug=FileBoolPlug(MM_SWAP_PATH / "vma_ra_enabled"))
 
-STANDARD_METAMODEL = MetaModel(_TOP)
+    MM_THP_PATH = MM_FS_PATH / "transparent_hugepage"
+    MetaTreeScalar("defrag", "", True, str, parent=node_thp,
+                   plug=ThpOptionPlug(MM_THP_PATH / "defrag"))
+    MetaTreeScalar("enabled", "", True, str, parent=node_thp,
+                   plug=ThpOptionPlug(MM_THP_PATH / "enabled"))
+    MetaTreeScalar("hpage_pmd_size", "", False, int, parent=node_thp,
+                   plug=FileIntPlug(MM_THP_PATH / "hpage_pmd_size"))
+    MetaTreeScalar("shmem_enabled", "", True, str, parent=node_thp,
+                   plug=ThpOptionPlug(MM_THP_PATH / "shmem_enabled"))
+    MetaTreeScalar("use_zero_page", "", True, int, parent=node_thp,
+                   plug=FileIntPlug(MM_THP_PATH / "use_zero_page"))
+
+    MM_THP_KHPD_PATH = MM_THP_PATH / "khugepaged"
+    MetaTreeScalar("alloc_sleep_millisecs", "", True, int, parent=node_khpd,
+                   plug=FileIntPlug(MM_THP_KHPD_PATH / "alloc_sleep_millisecs"))
+    MetaTreeScalar("max_ptes_none", "", True, int, parent=node_khpd,
+                   plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_none"))
+    MetaTreeScalar("max_ptes_shared", "", True, int, parent=node_khpd,
+                   plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_shared"))
+    MetaTreeScalar("max_ptes_swap", "", True, int, parent=node_khpd,
+                   plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_swap"))
+    MetaTreeScalar("pages_to_scan", "", True, int, parent=node_khpd,
+                   plug=FileIntPlug(MM_THP_KHPD_PATH / "pages_to_scan"))
+    MetaTreeScalar("scan_sleep_millisecs", "", True, int, parent=node_khpd,
+                   plug=FileIntPlug(MM_THP_KHPD_PATH / "scan_sleep_millisecs"))
+
+    return MetaModel(node_top)
+
+# Get the metamodel for the current system
+def SystemMetamodel() -> MetaModel:
+    version_str = platform.uname().release
+    kvn = KernelVersionNumber(version_str)
+    return GenerateMetamodel(kvn)
 
 def ReadSystemConfig(metamodel: MetaModel) -> TypecheckedModel:
     rawdata = {}
@@ -525,7 +639,7 @@ def LoadAndCheckConfigFile(filename: pathlib.Path) -> TypecheckedModel:
     with open(filename, 'r') as file:
         rawdata = yaml.safe_load(file)
     
-    typecheck_results = STANDARD_METAMODEL.CreateTypecheckedModel(rawdata)
+    typecheck_results = SystemMetamodel().CreateTypecheckedModel(rawdata)
 
     if not typecheck_results.success:
         print("File typechecking failed!")
@@ -586,7 +700,7 @@ class InfoSubcommand(Subcommand):
         pass
 
     def Go(self, args):
-        STANDARD_METAMODEL.PrintTree()
+        SystemMetamodel().PrintTree()
 
 class TypecheckSubcommand(Subcommand):
     def __init__(self):
@@ -607,7 +721,7 @@ class ObtainSubcommand(Subcommand):
         parser.add_argument("filename", type=pathlib.Path, help="save config to this file")
     
     def Go(self, args):
-        sysconfig = ReadSystemConfig(STANDARD_METAMODEL)
+        sysconfig = ReadSystemConfig(SystemMetamodel())
         with open(args.filename, "w") as file:
             yaml.safe_dump(sysconfig.RawData(), file)
 
@@ -644,7 +758,7 @@ class VerifySubcommand(Subcommand):
 
     def Go(self, args):
         model = LoadAndCheckConfigFile(args.filename)
-        sysconfig = ReadSystemConfig(STANDARD_METAMODEL)
+        sysconfig = ReadSystemConfig(SystemMetamodel())
         difflist = DiffTypecheckedModels(model, sysconfig, "file", "system")
         if not difflist:
             print("Verify OK.")
