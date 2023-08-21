@@ -9,10 +9,12 @@ the system into a standardized environent.
 
 from abc import ABC, abstractmethod
 import io
+import os         # for getting script directory
 import pathlib
-import platform # for platform.uname()
-import re       # for kernel version decoding
-import sys      # for stdout
+import platform   # for platform.uname()
+import re         # for kernel version decoding
+import subprocess # for git
+import sys        # for stdout
 from typing import Any, IO, Optional, TextIO
 
 # ===[ HELPER FUNCTIONS ]===
@@ -770,10 +772,68 @@ class VerifySubcommand(Subcommand):
             print('\n'.join(difflist))
             exit(1)
 
+class VersionSubcommand(Subcommand):
+    def __init__(self):
+        super().__init__("version", "print tool version")
+
+    def SetupParser(self, parser: argparse.ArgumentParser):
+        pass
+
+    def Go(self, args):
+        # Use current Git commit ID as the "version number" for now
+
+        # NOTE: assume Git stdout/stderr is ASCII encoded
+
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+
+        git_top_dir = subprocess.run(["git", "rev-parse", "--show-toplevel"], 
+                                     capture_output=True, cwd=script_dir)
+        if git_top_dir.returncode != 0:
+            print('git rev-parse --show-toplevel ran with error. Cannot find project root.')
+            stderr = git_top_dir.stderr.decode('ascii').rstrip()
+            print(f'git subprocess stderr: {stderr}')
+        top_dir = git_top_dir.stdout.decode('ascii').rstrip()
+
+        # Make sure that the git directory doesn't contain pending changes,
+        # as the pending changes may mean that this script operates differently
+        # when compared to the most recent committed version
+        git_diff_index = subprocess.run(["git", "diff-index", "--quiet", "HEAD", "--"], cwd=top_dir)
+        if git_diff_index.returncode != 0:
+            print("git repository contains uncommited changes - aborting")
+            exit(1)
+
+        # Make sure that the git directory doesn't contain untracked files,
+        # since these could theoretically cause the script to operately
+        # differently compared to the commited version
+        git_ls_files = subprocess.run(["git", "ls-files", "--exclude-standard", "--others"], 
+                                      capture_output=True, cwd=top_dir)
+        if git_ls_files.returncode != 0:
+            print('git ls-files ran with error. Aborting since presence of untracked changes unknown.')
+            stderr = git_ls_files.stderr.decode('ascii').rstrip()
+            print(f'git subprocess stderr: {stderr}')
+            exit(1)
+        else:
+            stdout = git_ls_files.stdout.decode('ascii').rstrip()
+            if stdout != "":
+                print('git repository contains untracked, unignored files - aborting')
+                exit(1)
+
+        rev_parse_head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, cwd=top_dir)
+        if rev_parse_head.returncode != 0:
+            stderr = rev_parse_head.stderr.decode('ascii').rstrip()
+            print("Couldn't run git command to find version!")
+            print(f"git subprocess stderr: {stderr}")
+            exit(1)
+
+        git_commit_id = rev_parse_head.stdout.decode('ascii').rstrip()
+        print(f"GitCommitID: {git_commit_id}")
+        exit(0)
+
 def main():
     parser = argparse.ArgumentParser("cf2", description=__doc__)
 
-    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand(), ObtainSubcommand(), ApplySubcommand(), VerifySubcommand()]
+    subcmds: list[Subcommand] = [InfoSubcommand(), TypecheckSubcommand(), ObtainSubcommand(),
+                                 ApplySubcommand(), VerifySubcommand(), VersionSubcommand()]
 
     subparsers = parser.add_subparsers(title = "Mode")
 
