@@ -11,7 +11,8 @@ from abc import ABC, abstractmethod
 import io
 import pathlib
 import platform # for platform.uname()
-import sys # for stdout
+import re       # for kernel version decoding
+import sys      # for stdout
 from typing import Any, IO, Optional, TextIO
 
 # ===[ HELPER FUNCTIONS ]===
@@ -32,15 +33,15 @@ class KernelVersionNumber:
     suffix: str
 
     def __init__(self, version_string: str):
-        # Version string of style: w.x.y-z-suffix
-        top_split = version_string.split('-')
-        bottom_split = top_split[0].split('.')
-        self.w = int(bottom_split[0])
-        self.x = int(bottom_split[1])
-        self.y = int(bottom_split[2])
-        self.z = int(top_split[1])
-        if len(top_split) == 3:
-            self.suffix = top_split[2]
+        # Version string of style: w.x.y-z(suffix) where suffix starts with - or .
+        decoded = re.search(r'([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)([-\.].*)?', version_string)
+
+        if not decoded:
+            raise ValueError(f'{version_string} is not a kernel version number!')
+
+        (self.w, self.x, self.y, self.z) = [int(x) for x in decoded.group(1, 2, 3, 4)]
+        if decoded.group(5) is not None:
+            self.suffix = decoded.group(5)
         else:
             self.suffix = ''
     
