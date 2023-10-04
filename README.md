@@ -70,4 +70,6 @@ Instead, it enables the "visitor" pattern by providing an `AcceptVisitor`
 method that accepts a `MetaTreeVisitor`.
 For an example of using this interface, see the `MetaTreePrinter` class.
 
+# License
+This project is licensed under the terms of the MIT license.
 
