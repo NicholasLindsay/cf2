@@ -20,7 +20,11 @@ source "${ACTIVATE_SCRIPT}"
 
 # Run command
 python3 "${SCRIPT_DIR}/../src/cf2.py" "$@"
+EXITCODE=$?
 
 # Deactivate virtual environment
 deactivate
+
+# Return exit code returned by Python script
+exit ${EXITCODE}
 
