@@ -497,7 +497,7 @@ def DiffTypecheckedModels(left: TypecheckedModel,
                           right: TypecheckedModel, 
                           leftname: str, 
                           rightname: str) -> list[str]:
-    # TODO: Handle case where left and right metamodels aree different
+    # TODO: Handle case where left and right metamodels are different
     metamodel = left.MetaModel()
     difflist = []
     visitor = MetaTreeDiffVisitor(left.RawData(), right.RawData(), leftname, rightname, difflist)
@@ -568,17 +568,20 @@ def GenerateMetamodel(kvn: KernelVersionNumber) -> MetaModel:
 
     # Assume MGLRU was released in Linux 6.1:
     # (see https://www.phoronix.com/news/Linux-6.1-rc1-Released)
-    if (kvn.w == 6 and (kvn.x >= 1)):
+    if kvn.w > 6 or (kvn.w == 6 and kvn.x >= 1):
         node_lru_gen = MetaTreeFixedDict("lru_gen", "", True, parent=node_top)
         MM_LRU_GEN_PATH = MM_FS_PATH / "lru_gen"
         MetaTreeScalar("enabled", "", True, str, parent=node_lru_gen,
                        plug=FileStrPlug(MM_LRU_GEN_PATH / "enabled"))
         MetaTreeScalar("min_ttl_ms", "", True, int, parent=node_lru_gen,
                        plug=FileIntPlug(MM_LRU_GEN_PATH / "min_ttl_ms"))
-
-    MM_NUMA_PATH = MM_FS_PATH / "numa"
-    MetaTreeScalar("demotion_enabled", "", True, bool, parent=node_numa,
-                   plug=FileBoolPlug(MM_NUMA_PATH / "demotion_enabled"))
+    
+    # Assume NUMA page demotion released in Linux 5.15
+    # (see https://www.phoronix.com/news/Linux-5.15-Demote-During-Reclai)
+    if kvn.w > 5 or (kvn.w == 5 and kvn.x >= 15):    
+        MM_NUMA_PATH = MM_FS_PATH / "numa"
+        MetaTreeScalar("demotion_enabled", "", True, bool, parent=node_numa,
+                    plug=FileBoolPlug(MM_NUMA_PATH / "demotion_enabled"))
 
     MM_SWAP_PATH = MM_FS_PATH / "swap"
     MetaTreeScalar("vma_ra_enabled", "", True, bool, parent=node_swap,
@@ -601,8 +604,11 @@ def GenerateMetamodel(kvn: KernelVersionNumber) -> MetaModel:
                    plug=FileIntPlug(MM_THP_KHPD_PATH / "alloc_sleep_millisecs"))
     MetaTreeScalar("max_ptes_none", "", True, int, parent=node_khpd,
                    plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_none"))
-    MetaTreeScalar("max_ptes_shared", "", True, int, parent=node_khpd,
-                   plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_shared"))
+    # max_ptes_shared introduced in Linux 5.8
+    # (see https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/Documentation/admin-guide/mm/transhuge.rst?h=v5.8 vs 5.7 version)
+    if kvn.w > 5 or (kvn.w == 5 and kvn.x >= 8):    
+        MetaTreeScalar("max_ptes_shared", "", True, int, parent=node_khpd,
+                    plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_shared"))
     MetaTreeScalar("max_ptes_swap", "", True, int, parent=node_khpd,
                    plug=FileIntPlug(MM_THP_KHPD_PATH / "max_ptes_swap"))
     MetaTreeScalar("pages_to_scan", "", True, int, parent=node_khpd,
