@@ -545,7 +545,6 @@ def GenerateMetamodel(kvn: KernelVersionNumber) -> MetaModel:
     MM_FS_PATH = pathlib.Path("/sys/kernel/mm")
 
     node_ksm = MetaTreeFixedDict("ksm", "kernel samepage merging", True, parent=node_top)
-    node_numa = MetaTreeFixedDict("numa", "non-uniform memory access", True, parent = node_top)
     node_swap = MetaTreeFixedDict("swap", "", True, parent=node_top)
     node_thp = MetaTreeFixedDict("transparent_hugepage", "transparent hugepages", True, parent=node_top)
     node_khpd = MetaTreeFixedDict("khugepaged", "huge pages daemon", True, parent=node_thp)
@@ -579,6 +578,7 @@ def GenerateMetamodel(kvn: KernelVersionNumber) -> MetaModel:
     # Assume NUMA page demotion released in Linux 5.15
     # (see https://www.phoronix.com/news/Linux-5.15-Demote-During-Reclai)
     if kvn.w > 5 or (kvn.w == 5 and kvn.x >= 15):    
+        node_numa = MetaTreeFixedDict("numa", "non-uniform memory access", True, parent = node_top)
         MM_NUMA_PATH = MM_FS_PATH / "numa"
         MetaTreeScalar("demotion_enabled", "", True, bool, parent=node_numa,
                     plug=FileBoolPlug(MM_NUMA_PATH / "demotion_enabled"))
